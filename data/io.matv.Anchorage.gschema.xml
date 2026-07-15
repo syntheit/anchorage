@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="io.matv.Anchorage" path="/io/matv/Anchorage/">
+    <key name="server-url" type="s">
+      <default>''</default>
+      <summary>Linkding server base URL</summary>
+      <description>
+        The base URL of the Linkding instance (e.g. https://links.example.com).
+        Stored here as a non-secret fallback; the API token lives in the
+        Secret Service.
+      </description>
+    </key>
+  </schema>
+</schemalist>

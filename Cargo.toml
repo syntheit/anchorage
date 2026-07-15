@@ -1,0 +1,42 @@
+[package]
+name = "anchorage"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "Native GTK4/libadwaita client for Linkding bookmarks"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/matv/anchorage"
+readme = "README.md"
+default-run = "anchorage"
+
+[[bin]]
+name = "anchorage"
+path = "src/main.rs"
+
+[dependencies]
+# GTK / libadwaita bindings. v4_10 ABI is a safe floor; libadwaita v1_5 gives us AboutDialog.
+gtk = { package = "gtk4", version = "0.11", features = ["v4_12"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_5"] }
+
+# API layer — async client only, rustls (no OpenSSL needed for reqwest).
+# The crate's lib name is `linkding`; rename it to `linkding_rs` for clearer imports.
+linkding_rs = { package = "linkding-rs", version = "0.4", default-features = false, features = ["async", "rustls-tls"] }
+
+# Async plumbing: a shared tokio runtime bridged to the GLib main loop via async-channel.
+tokio = { version = "1", features = ["rt-multi-thread"] }
+async-channel = "2"
+
+# Secret storage (server token) via the Secret Service over D-Bus.
+oo7 = "0.6"
+
+# Misc.
+url = "2"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

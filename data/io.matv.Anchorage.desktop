@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Anchorage
+GenericName=Bookmark Manager
+Comment=Save and browse your Linkding bookmarks
+Type=Application
+Categories=Network;
+Keywords=bookmark;linkding;links;save;read later;
+Exec=anchorage
+Icon=io.matv.Anchorage
+Terminal=false
+StartupNotify=true
+DBusActivatable=false

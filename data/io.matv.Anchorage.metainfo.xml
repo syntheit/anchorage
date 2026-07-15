@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.matv.Anchorage</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>Anchorage</name>
+  <summary>Save and browse your Linkding bookmarks</summary>
+
+  <description>
+    <p>
+      Anchorage is a native GTK4/libadwaita client for Linkding, the self-hosted
+      bookmark manager. It is designed mobile-first for GNOME Shell Mobile and
+      adapts cleanly to the desktop.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Browse and search your bookmarks, including tag and status filters</li>
+      <li>Add bookmarks by URL with automatic title, description and tag suggestions</li>
+      <li>Edit, archive, unarchive and delete bookmarks</li>
+      <li>Open bookmarks in your browser</li>
+      <li>Credentials stored securely via the Secret Service</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.matv.Anchorage.desktop</launchable>
+
+  <url type="homepage">https://github.com/matv/anchorage</url>
+  <url type="bugtracker">https://github.com/matv/anchorage/issues</url>
+
+  <developer id="io.matv">
+    <name>Anchorage contributors</name>
+  </developer>
+
+  <content_rating type="oars-1.1" />
+
+  <categories>
+    <category>Network</category>
+    <category>Utility</category>
+  </categories>
+
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <control>touch</control>
+  </recommends>
+
+  <releases>
+    <release version="0.1.0" date="2026-07-14">
+      <description>
+        <p>Initial release: connect, browse, search, add, edit, archive and delete.</p>
+      </description>
+    </release>
+  </releases>
+</component>
