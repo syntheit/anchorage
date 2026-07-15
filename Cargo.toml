@@ -7,6 +7,8 @@ description = "Native GTK4/libadwaita client for Linkding bookmarks"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/syntheit/anchorage"
 readme = "README.md"
+keywords = ["gtk4", "libadwaita", "linkding", "bookmarks", "gnome"]
+categories = ["gui"]
 default-run = "anchorage"
 
 [[bin]]
