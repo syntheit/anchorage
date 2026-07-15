@@ -114,8 +114,11 @@ data/
 `linkding-rs`, `oo7` and `reqwest` need a tokio reactor, which the GLib executor
 doesn't provide. `runtime::spawn` runs the `Send` future on the tokio runtime and
 delivers the result to a `glib::spawn_future_local` closure on the main thread,
-where `!Send` widget updates are legal. Every UI path uses this — **no blocking
-calls, no `unwrap()`/`panic!` on network or user input.**
+where `!Send` widget updates are legal. Every UI path uses this — no blocking
+calls, and errors from the network or user input are surfaced as toasts rather
+than panicking. The only `expect()`s are two unrecoverable startup invariants
+(initialising libadwaita and building the tokio runtime); if either fails the
+process cannot run at all, so it exits with a clear message instead of limping on.
 
 ## API layer
 
