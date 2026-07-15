@@ -110,22 +110,18 @@ fn main_page(
     let settings = settings_view(app, nav, &client);
 
     let stack = adw::ViewStack::new();
-    let active_page = stack.add_titled_with_icon(
+    stack.add_titled_with_icon(
         active.widget(),
         Some("active"),
         "Bookmarks",
         "user-bookmarks-symbolic",
     );
-    active_page.set_icon_name(Some("user-bookmarks-symbolic"));
-
-    let archived_page = stack.add_titled_with_icon(
+    stack.add_titled_with_icon(
         archived.widget(),
         Some("archived"),
         "Archived",
         "folder-symbolic",
     );
-    let _ = archived_page;
-
     stack.add_titled_with_icon(&settings, Some("settings"), "Settings", "emblem-system-symbolic");
 
     // --- Header buttons -------------------------------------------------------
@@ -205,7 +201,9 @@ fn main_page(
         }
     ));
 
-    // On child change: re-bind search bar, toggle button visibility.
+    // On child change: re-bind search bar, toggle button visibility, and
+    // lazily load the archived list the first time it's shown.
+    let archived_loaded = Rc::new(std::cell::Cell::new(false));
     stack.connect_visible_child_name_notify(clone!(
         #[strong] active,
         #[strong] archived,
@@ -213,6 +211,7 @@ fn main_page(
         #[strong] refresh_btn,
         #[strong] add_btn,
         #[strong] search_binding,
+        #[strong] archived_loaded,
         move |stack| {
             let child = stack.visible_child_name();
             let child = child.as_deref();
@@ -244,6 +243,11 @@ fn main_page(
                         .sync_create()
                         .build();
                     *search_binding.borrow_mut() = Some(binding);
+
+                    // Archived loads on first switch (active loads eagerly below).
+                    if !archived_loaded.replace(true) {
+                        archived.refresh();
+                    }
                 }
                 _ => {
                     // Hide all list-specific buttons on settings page.
@@ -259,18 +263,6 @@ fn main_page(
 
     // Load the first page of the active list eagerly; archived loads on switch.
     active.refresh();
-    let archived_loaded = Rc::new(std::cell::Cell::new(false));
-    stack.connect_visible_child_name_notify(clone!(
-        #[strong] archived,
-        #[strong] archived_loaded,
-        move |stack| {
-            if stack.visible_child_name().as_deref() == Some("archived")
-                && !archived_loaded.replace(true)
-            {
-                archived.refresh();
-            }
-        }
-    ));
 
     let page = adw::NavigationPage::builder()
         .title("Anchorage")
@@ -386,9 +378,12 @@ fn settings_view(
         move |_| {
             let about = adw::AboutDialog::builder()
                 .application_name("Anchorage")
+                .application_icon("io.matv.Anchorage")
                 .version(env!("CARGO_PKG_VERSION"))
                 .developer_name("Daniel Miller")
                 .website("https://github.com/syntheit/anchorage")
+                .issue_url("https://github.com/syntheit/anchorage/issues")
+                .license_type(gtk::License::Gpl30)
                 .build();
             about.present(Some(&page));
         }
