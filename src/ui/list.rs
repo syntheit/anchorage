@@ -319,6 +319,9 @@ impl BookmarkList {
 
         let popover = gtk::Popover::builder().has_arrow(true).build();
         popover.set_parent(anchor);
+        // The popover is manually parented to the row, so it must be unparented
+        // when it closes — otherwise every row-action click leaks a widget.
+        popover.connect_closed(|p| p.unparent());
 
         let vbox = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -341,10 +344,14 @@ impl BookmarkList {
 
         let open_b = make("Open in browser", "web-browser-symbolic");
         let edit_b = make("Edit", "document-edit-symbolic");
-        let archive_b = make(
-            if self.inner.scope == Scope::Archived { "Unarchive" } else { "Archive" },
-            "user-trash-symbolic",
-        );
+        // Distinct icons so archive/unarchive don't read as "delete": a
+        // put-away box for Archive, a restore glyph for Unarchive.
+        let (archive_label, archive_icon) = if self.inner.scope == Scope::Archived {
+            ("Unarchive", "view-restore-symbolic")
+        } else {
+            ("Archive", "folder-download-symbolic")
+        };
+        let archive_b = make(archive_label, archive_icon);
         let delete_b = make("Delete", "edit-delete-symbolic");
         delete_b.add_css_class("destructive-action");
 
