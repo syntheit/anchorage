@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3584e4"/>
+      <stop offset="1" stop-color="#1a5fb4"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded-square backdrop, GNOME app-icon style -->
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="url(#bg)"/>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="none" stroke="#0d3868" stroke-opacity="0.35" stroke-width="2"/>
+
+  <!-- Anchor, drawn in white with a bold, simple silhouette -->
+  <g fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Ring at the top -->
+    <circle cx="64" cy="30" r="9"/>
+    <!-- Shank (vertical shaft) -->
+    <line x1="64" y1="39" x2="64" y2="96"/>
+    <!-- Stock (horizontal crossbar) -->
+    <line x1="44" y1="52" x2="84" y2="52"/>
+    <!-- Curved flukes / arms sweeping up from the crown -->
+    <path d="M32 74 C32 96 46 104 64 104 C82 104 96 96 96 74"/>
+  </g>
+  <!-- Fluke tips (barbs) as short accents -->
+  <g fill="#ffffff">
+    <path d="M32 74 l-9 -3 l6 12 z"/>
+    <path d="M96 74 l9 -3 l-6 12 z"/>
+  </g>
+</svg>

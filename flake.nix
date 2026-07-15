@@ -91,6 +91,8 @@
                 $out/share/applications/io.matv.Anchorage.desktop
               install -Dm644 data/io.matv.Anchorage.metainfo.xml \
                 $out/share/metainfo/io.matv.Anchorage.metainfo.xml
+              install -Dm644 data/icons/hicolor/scalable/apps/io.matv.Anchorage.svg \
+                $out/share/icons/hicolor/scalable/apps/io.matv.Anchorage.svg
               install -Dm644 data/io.matv.Anchorage.gschema.xml \
                 $out/share/glib-2.0/schemas/io.matv.Anchorage.gschema.xml
               glib-compile-schemas $out/share/glib-2.0/schemas
@@ -126,7 +128,7 @@
           ];
 
           # Point gio::Settings at the locally compiled schema during dev.
-          # Run `just schemas` (or the command below) once, then `cargo run`.
+          # The shellHook below compiles the schema and exports GSETTINGS_SCHEMA_DIR.
           shellHook = ''
             export GSETTINGS_SCHEMA_DIR="$PWD/data"
             # `cargo run` launches the unwrapped binary; nix build's wrapGAppsHook4
