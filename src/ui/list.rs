@@ -25,7 +25,9 @@ pub enum Scope {
 /// A self-contained bookmark list widget + its state.
 #[derive(Clone)]
 pub struct BookmarkList {
-    root: adw::ToolbarView,
+    /// The content widget (search bar + toast overlay/stack) — embed this directly.
+    content: gtk::Box,
+    search_bar: gtk::SearchBar,
     inner: Rc<Inner>,
 }
 
@@ -46,7 +48,7 @@ struct Inner {
 }
 
 impl BookmarkList {
-    /// Build a list view for `scope`. `title` names the header/empty-state.
+    /// Build a list view for `scope`.
     pub fn new(client: Client, scope: Scope) -> Self {
         let listbox = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::None)
@@ -90,9 +92,9 @@ impl BookmarkList {
         let toasts = adw::ToastOverlay::new();
         toasts.set_child(Some(&stack));
 
-        // Header: title + search toggle + refresh + add.
+        // Search bar — lives below the (outer) header bar.
         let search_entry = gtk::SearchEntry::builder()
-            .placeholder_text("Search bookmarks…  (try #tag  !unread)")
+            .placeholder_text("Search bookmarks\u{2026}  (try #tag  !unread)")
             .hexpand(true)
             .build();
         let search_bar = gtk::SearchBar::builder()
@@ -101,52 +103,11 @@ impl BookmarkList {
             .build();
         search_bar.connect_entry(&search_entry);
 
-        let search_toggle = gtk::ToggleButton::builder()
-            .icon_name("system-search-symbolic")
-            .tooltip_text("Search")
-            .build();
-        search_bar
-            .bind_property("search-mode-enabled", &search_toggle, "active")
-            .bidirectional()
-            .sync_create()
-            .build();
-
-        let refresh_button = gtk::Button::builder()
-            .icon_name("view-refresh-symbolic")
-            .tooltip_text("Refresh")
-            .build();
-
-        let title = match scope {
-            Scope::Active => "Bookmarks",
-            Scope::Archived => "Archived",
-        };
-        let header = adw::HeaderBar::builder()
-            .title_widget(&adw::WindowTitle::new(title, ""))
-            .build();
-        header.pack_start(&search_toggle);
-        header.pack_end(&refresh_button);
-
-        // Add button only makes sense for the active list.
-        let add_button = if scope == Scope::Active {
-            let b = gtk::Button::builder()
-                .icon_name("list-add-symbolic")
-                .tooltip_text("Add bookmark")
-                .css_classes(["suggested-action"])
-                .build();
-            header.pack_end(&b);
-            Some(b)
-        } else {
-            None
-        };
-
         let content = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .build();
         content.append(&search_bar);
         content.append(&toasts);
-
-        let root = adw::ToolbarView::builder().content(&content).build();
-        root.add_top_bar(&header);
 
         let inner = Rc::new(Inner {
             client,
@@ -163,29 +124,24 @@ impl BookmarkList {
             debounce: RefCell::new(None),
         });
 
-        let this = BookmarkList { root, inner };
+        let this = BookmarkList { content, search_bar, inner };
 
-        // Wire interactions.
+        // Wire search entry.
         this.wire_search(&search_entry);
         this.wire_pagination(&scroller);
         this.wire_row_activation();
-        refresh_button.connect_clicked(clone!(
-            #[strong] this,
-            move |_| this.refresh()
-        ));
-        if let Some(add) = add_button {
-            add.connect_clicked(clone!(
-                #[strong] this,
-                move |_| this.open_add()
-            ));
-        }
 
         this
     }
 
-    /// The top-level widget to embed in the navigation/split view.
-    pub fn widget(&self) -> &adw::ToolbarView {
-        &self.root
+    /// The content widget to embed as a view-stack child.
+    pub fn widget(&self) -> &gtk::Box {
+        &self.content
+    }
+
+    /// The search bar for this list; the outer header binds its toggle to this.
+    pub fn search_bar(&self) -> &gtk::SearchBar {
+        &self.search_bar
     }
 
     /// Reload from the first page using the current query.
@@ -203,10 +159,10 @@ impl BookmarkList {
     pub fn open_add(&self) {
         let this = self.clone();
         let client = self.inner.client.clone();
-        let parent = self.root.clone();
+        let parent = self.content.clone();
 
         // Try to read a URL from the clipboard for the fast paste path.
-        let display = self.root.display();
+        let display = self.content.display();
         let clipboard = display.clipboard();
         clipboard.read_text_async(
             gtk::gio::Cancellable::NONE,
@@ -500,7 +456,7 @@ impl BookmarkList {
 
         let dialog = adw::AlertDialog::builder()
             .heading("Delete bookmark?")
-            .body(format!("“{title}” will be permanently deleted."))
+            .body(format!("\u{201c}{title}\u{201d} will be permanently deleted."))
             .build();
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("delete", "Delete");
@@ -514,7 +470,7 @@ impl BookmarkList {
                 this.do_delete(id);
             }
         });
-        dialog.present(Some(&self.root));
+        dialog.present(Some(&self.content));
     }
 
     fn do_delete(&self, id: i32) {

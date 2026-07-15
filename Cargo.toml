@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.80"
 description = "Native GTK4/libadwaita client for Linkding bookmarks"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/matv/anchorage"
+repository = "https://github.com/syntheit/anchorage"
 readme = "README.md"
 default-run = "anchorage"
 

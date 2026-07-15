@@ -98,7 +98,7 @@
 
             meta = with pkgs.lib; {
               description = "Native GTK4/libadwaita client for Linkding bookmarks";
-              homepage = "https://github.com/matv/anchorage";
+              homepage = "https://github.com/syntheit/anchorage";
               license = licenses.gpl3Plus;
               mainProgram = "anchorage";
               platforms = platforms.linux;

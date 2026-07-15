@@ -95,6 +95,10 @@ fn show_main(app: &adw::Application, nav: &adw::NavigationView, client: Client) 
 }
 
 /// Build the connected main page (view stack + switcher + adaptive breakpoint).
+///
+/// Single `adw::HeaderBar` lives here; the per-list inner headers have been
+/// removed. The search-toggle, refresh and add buttons are re-pointed to
+/// whichever list is currently visible.
 fn main_page(
     app: &adw::Application,
     nav: &adw::NavigationView,
@@ -102,6 +106,8 @@ fn main_page(
 ) -> adw::NavigationPage {
     let active = BookmarkList::new(client.clone(), Scope::Active);
     let archived = BookmarkList::new(client.clone(), Scope::Archived);
+
+    let settings = settings_view(app, nav, &client);
 
     let stack = adw::ViewStack::new();
     let active_page = stack.add_titled_with_icon(
@@ -120,12 +126,140 @@ fn main_page(
     );
     let _ = archived_page;
 
-    let settings = settings_view(app, nav, &client);
     stack.add_titled_with_icon(&settings, Some("settings"), "Settings", "emblem-system-symbolic");
+
+    // --- Header buttons -------------------------------------------------------
+    let search_toggle = gtk::ToggleButton::builder()
+        .icon_name("system-search-symbolic")
+        .tooltip_text("Search")
+        .build();
+
+    let refresh_btn = gtk::Button::builder()
+        .icon_name("view-refresh-symbolic")
+        .tooltip_text("Refresh")
+        .build();
+
+    let add_btn = gtk::Button::builder()
+        .icon_name("list-add-symbolic")
+        .tooltip_text("Add bookmark")
+        .css_classes(["suggested-action"])
+        .build();
+
+    // Wide: switcher in the header. Narrow: switcher bar at the bottom.
+    let switcher_title = adw::ViewSwitcher::builder()
+        .stack(&stack)
+        .policy(adw::ViewSwitcherPolicy::Wide)
+        .build();
+
+    let header = adw::HeaderBar::builder()
+        .title_widget(&switcher_title)
+        .build();
+    header.pack_start(&search_toggle);
+    header.pack_end(&add_btn);
+    header.pack_end(&refresh_btn);
+
+    let switcher_bar = adw::ViewSwitcherBar::builder().stack(&stack).build();
+
+    let toolbar = adw::ToolbarView::builder().content(&stack).build();
+    toolbar.add_top_bar(&header);
+    toolbar.add_bottom_bar(&switcher_bar);
+
+    // --- Wire buttons to the currently-visible list ---------------------------
+    // Initial binding: active list's search bar -> search toggle.
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let initial_binding = active
+        .search_bar()
+        .bind_property("search-mode-enabled", &search_toggle, "active")
+        .bidirectional()
+        .sync_create()
+        .build();
+    let search_binding: Rc<RefCell<Option<glib::Binding>>> =
+        Rc::new(RefCell::new(Some(initial_binding)));
+
+    // Refresh button.
+    refresh_btn.connect_clicked(clone!(
+        #[strong] active,
+        #[strong] archived,
+        #[strong] stack,
+        move |_| {
+            match stack.visible_child_name().as_deref() {
+                Some("active") => active.refresh(),
+                Some("archived") => archived.refresh(),
+                _ => {}
+            }
+        }
+    ));
+
+    // Add button.
+    add_btn.connect_clicked(clone!(
+        #[strong] active,
+        #[strong] archived,
+        #[strong] stack,
+        move |_| {
+            match stack.visible_child_name().as_deref() {
+                Some("active") => active.open_add(),
+                Some("archived") => archived.open_add(),
+                _ => {}
+            }
+        }
+    ));
+
+    // On child change: re-bind search bar, toggle button visibility.
+    stack.connect_visible_child_name_notify(clone!(
+        #[strong] active,
+        #[strong] archived,
+        #[strong] search_toggle,
+        #[strong] refresh_btn,
+        #[strong] add_btn,
+        #[strong] search_binding,
+        move |stack| {
+            let child = stack.visible_child_name();
+            let child = child.as_deref();
+
+            // Drop the old binding before building a new one.
+            *search_binding.borrow_mut() = None;
+
+            match child {
+                Some("active") => {
+                    search_toggle.set_visible(true);
+                    refresh_btn.set_visible(true);
+                    add_btn.set_visible(true);
+                    let binding = active
+                        .search_bar()
+                        .bind_property("search-mode-enabled", &search_toggle, "active")
+                        .bidirectional()
+                        .sync_create()
+                        .build();
+                    *search_binding.borrow_mut() = Some(binding);
+                }
+                Some("archived") => {
+                    search_toggle.set_visible(true);
+                    refresh_btn.set_visible(true);
+                    add_btn.set_visible(false);
+                    let binding = archived
+                        .search_bar()
+                        .bind_property("search-mode-enabled", &search_toggle, "active")
+                        .bidirectional()
+                        .sync_create()
+                        .build();
+                    *search_binding.borrow_mut() = Some(binding);
+                }
+                _ => {
+                    // Hide all list-specific buttons on settings page.
+                    search_toggle.set_visible(false);
+                    refresh_btn.set_visible(false);
+                    add_btn.set_visible(false);
+                    // Reset toggle so it doesn't appear activated when we return.
+                    search_toggle.set_active(false);
+                }
+            }
+        }
+    ));
 
     // Load the first page of the active list eagerly; archived loads on switch.
     active.refresh();
-    let archived_loaded = std::rc::Rc::new(std::cell::Cell::new(false));
+    let archived_loaded = Rc::new(std::cell::Cell::new(false));
     stack.connect_visible_child_name_notify(clone!(
         #[strong] archived,
         #[strong] archived_loaded,
@@ -138,22 +272,6 @@ fn main_page(
         }
     ));
 
-    // Wide: switcher in the header. Narrow: switcher bar at the bottom.
-    let switcher_title = adw::ViewSwitcher::builder()
-        .stack(&stack)
-        .policy(adw::ViewSwitcherPolicy::Wide)
-        .build();
-
-    let header = adw::HeaderBar::builder()
-        .title_widget(&switcher_title)
-        .build();
-
-    let switcher_bar = adw::ViewSwitcherBar::builder().stack(&stack).build();
-
-    let toolbar = adw::ToolbarView::builder().content(&stack).build();
-    toolbar.add_top_bar(&header);
-    toolbar.add_bottom_bar(&switcher_bar);
-
     let page = adw::NavigationPage::builder()
         .title("Anchorage")
         .tag("main")
@@ -161,9 +279,6 @@ fn main_page(
         .build();
 
     // Breakpoint: below 550px show the bottom switcher bar and hide the header one.
-    // We can't attach a breakpoint to a NavigationPage, so the window owns it —
-    // set it up via the toolbar/switcher visibility here using a size handler.
-    // libadwaita's ViewSwitcherBar has a `reveal` property we bind to width.
     if let Some(window) = app.active_window().and_downcast::<adw::ApplicationWindow>() {
         install_breakpoint(&window, &switcher_bar, &switcher_title);
     }
@@ -197,12 +312,13 @@ fn install_breakpoint(
     window.add_breakpoint(breakpoint);
 }
 
-/// The Settings view: server info + disconnect + about.
+/// The Settings view: returns just the `adw::PreferencesPage` — no inner
+/// ToolbarView/HeaderBar; it is embedded directly as a stack child.
 fn settings_view(
     app: &adw::Application,
     nav: &adw::NavigationView,
     client: &Client,
-) -> adw::ToolbarView {
+) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::new();
 
     let server_group = adw::PreferencesGroup::builder().title("Server").build();
@@ -233,14 +349,11 @@ fn settings_view(
     page.add(&disconnect_group);
     page.add(&about_group);
 
-    let toolbar = adw::ToolbarView::builder().content(&page).build();
-    toolbar.add_top_bar(&adw::HeaderBar::new());
-
     // Disconnect: confirm, clear keyring, return to connect page.
     disconnect.connect_clicked(clone!(
         #[strong] app,
         #[weak] nav,
-        #[strong] toolbar,
+        #[strong] page,
         move |_| {
             let dialog = adw::AlertDialog::builder()
                 .heading("Disconnect?")
@@ -263,26 +376,23 @@ fn settings_view(
                     show_connect(&app, &nav, String::new());
                 });
             });
-            dialog.present(Some(&toolbar));
+            dialog.present(Some(&page));
         }
     ));
 
     // About dialog.
     about_row.connect_activated(clone!(
-        #[strong] toolbar,
+        #[strong] page,
         move |_| {
             let about = adw::AboutDialog::builder()
                 .application_name("Anchorage")
-                .application_icon(crate::APP_ID)
                 .version(env!("CARGO_PKG_VERSION"))
-                .developer_name("Anchorage contributors")
-                .license_type(gtk::License::Gpl30)
-                .comments("A native GTK4/libadwaita client for Linkding.")
-                .website("https://github.com/matv/anchorage")
+                .developer_name("Daniel Miller")
+                .website("https://github.com/syntheit/anchorage")
                 .build();
-            about.present(Some(&toolbar));
+            about.present(Some(&page));
         }
     ));
 
-    toolbar
+    page
 }
