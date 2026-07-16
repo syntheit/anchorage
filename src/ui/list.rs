@@ -10,7 +10,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use gtk::glib::{self, clone};
 
-use crate::api::{BookmarkView, Client};
+use crate::api::{BookmarkView, Client, UnreadFilter};
 use crate::runtime;
 
 use super::{add_sheet, row};
@@ -41,6 +41,7 @@ struct Inner {
     // id -> full bookmark, so actions can read the current model without refetch.
     bookmarks: RefCell<HashMap<i32, BookmarkView>>,
     query: RefCell<String>,
+    filter: Cell<UnreadFilter>,
     offset: Cell<i32>,
     total: Cell<i32>,
     loading: Cell<bool>,
@@ -103,10 +104,14 @@ impl BookmarkList {
             .build();
         search_bar.connect_entry(&search_entry);
 
+        // Read-status filter: All / Unread / Read as a linked toggle group.
+        let (filter_bar, filter_all, filter_unread, filter_read) = build_filter_bar();
+
         let content = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .build();
         content.append(&search_bar);
+        content.append(&filter_bar);
         content.append(&toasts);
 
         let inner = Rc::new(Inner {
@@ -118,6 +123,7 @@ impl BookmarkList {
             toasts,
             bookmarks: RefCell::new(HashMap::new()),
             query: RefCell::new(String::new()),
+            filter: Cell::new(UnreadFilter::All),
             offset: Cell::new(0),
             total: Cell::new(0),
             loading: Cell::new(false),
@@ -128,6 +134,9 @@ impl BookmarkList {
 
         // Wire search entry.
         this.wire_search(&search_entry);
+        this.wire_filter(&filter_all, UnreadFilter::All);
+        this.wire_filter(&filter_unread, UnreadFilter::Unread);
+        this.wire_filter(&filter_read, UnreadFilter::Read);
         this.wire_pagination(&scroller);
         this.wire_row_activation();
 
@@ -203,6 +212,18 @@ impl BookmarkList {
         });
     }
 
+    /// Wire a filter toggle: when it becomes active, apply `filter` and refresh.
+    /// Only the active button fires a reload (the group is exclusive, so the
+    /// previously-active button also emits `toggled` when it deactivates).
+    fn wire_filter(&self, button: &gtk::ToggleButton, filter: UnreadFilter) {
+        let this = self.clone();
+        button.connect_toggled(move |button| {
+            if button.is_active() && this.inner.filter.replace(filter) != filter {
+                this.refresh();
+            }
+        });
+    }
+
     /// Debounce search input by 300ms, then refresh with the new query.
     fn schedule_search(&self, text: String) {
         // Cancel any pending timer.
@@ -264,6 +285,7 @@ impl BookmarkList {
         }
 
         let query = self.inner.query.borrow().clone();
+        let filter = self.inner.filter.get();
         let offset = self.inner.offset.get();
         let client = self.inner.client.clone();
         let scope = self.inner.scope;
@@ -273,8 +295,8 @@ impl BookmarkList {
         runtime::spawn(
             async move {
                 match scope {
-                    Scope::Active => client.list(query_opt, offset).await,
-                    Scope::Archived => client.list_archived(query_opt, offset).await,
+                    Scope::Active => client.list(query_opt, filter, offset).await,
+                    Scope::Archived => client.list_archived(query_opt, filter, offset).await,
                 }
             },
             move |result| {
@@ -344,6 +366,13 @@ impl BookmarkList {
 
         let open_b = make("Open in browser", "web-browser-symbolic");
         let edit_b = make("Edit", "document-edit-symbolic");
+        // Toggle read status: label + icon reflect the action, not the state.
+        let (read_label, read_icon) = if bookmark.unread {
+            ("Mark as read", "object-select-symbolic")
+        } else {
+            ("Mark as unread", "mail-mark-important-symbolic")
+        };
+        let read_b = make(read_label, read_icon);
         // Distinct icons so archive/unarchive don't read as "delete": a
         // put-away box for Archive, a restore glyph for Unarchive.
         let (archive_label, archive_icon) = if self.inner.scope == Scope::Archived {
@@ -357,6 +386,7 @@ impl BookmarkList {
 
         vbox.append(&open_b);
         vbox.append(&edit_b);
+        vbox.append(&read_b);
         vbox.append(&archive_b);
         vbox.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         vbox.append(&delete_b);
@@ -403,6 +433,17 @@ impl BookmarkList {
             }
         ));
 
+        // Mark as read / unread.
+        read_b.connect_clicked(clone!(
+            #[strong] popover,
+            #[strong(rename_to = this)] self,
+            #[strong(rename_to = was_unread)] bookmark.unread,
+            move |_| {
+                popover.popdown();
+                this.toggle_unread(id, !was_unread);
+            }
+        ));
+
         // Archive / unarchive.
         archive_b.connect_clicked(clone!(
             #[strong] popover,
@@ -424,6 +465,24 @@ impl BookmarkList {
         ));
 
         popover.popup();
+    }
+
+    /// Set the read status of a bookmark and refresh so the list reflects the
+    /// change (and any active read/unread filter re-applies).
+    fn toggle_unread(&self, id: i32, unread: bool) {
+        let client = self.inner.client.clone();
+        let this = self.clone();
+        runtime::spawn(
+            async move { client.set_unread(id, unread).await },
+            move |result| match result {
+                Ok(()) => {
+                    let msg = if unread { "Marked as unread" } else { "Marked as read" };
+                    super::toast(&this.inner.toasts, msg);
+                    this.refresh();
+                }
+                Err(err) => super::toast(&this.inner.toasts, &err.to_string()),
+            },
+        );
     }
 
     fn toggle_archive(&self, id: i32) {
@@ -494,4 +553,32 @@ impl BookmarkList {
             },
         );
     }
+}
+
+/// Build the read-status filter bar: three linked, exclusive toggle buttons.
+/// Returns the container plus the individual buttons for wiring. "All" starts
+/// active to match [`UnreadFilter::All`], the list's default.
+fn build_filter_bar() -> (gtk::Box, gtk::ToggleButton, gtk::ToggleButton, gtk::ToggleButton) {
+    let all = gtk::ToggleButton::builder().label("All").active(true).build();
+    let unread = gtk::ToggleButton::builder().label("Unread").build();
+    let read = gtk::ToggleButton::builder().label("Read").build();
+    // Group them so exactly one is active at a time.
+    unread.set_group(Some(&all));
+    read.set_group(Some(&all));
+
+    let group = gtk::Box::builder().css_classes(["linked"]).build();
+    group.append(&all);
+    group.append(&unread);
+    group.append(&read);
+
+    let bar = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .halign(gtk::Align::Center)
+        .margin_top(6)
+        .margin_start(6)
+        .margin_end(6)
+        .build();
+    bar.append(&group);
+
+    (bar, all, unread, read)
 }

@@ -13,11 +13,33 @@ use std::sync::Arc;
 
 use linkding_rs::{
     Bookmark, CreateBookmarkBody, LinkDingAsyncClient, LinkDingError, ListBookmarksArgs,
-    ListTagsArgs, TagData, UpdateBookmarkBody,
+    ListBookmarksResponse, ListTagsArgs, TagData, UpdateBookmarkBody,
 };
 
 /// Default page size for list requests.
 pub const PAGE_LIMIT: i32 = 100;
+
+/// Read-status filter for the bookmark list, mapping to Linkding's `unread`
+/// query parameter. `linkding-rs` doesn't expose this param, so the list calls
+/// build the request directly (see [`Client::list_endpoint`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum UnreadFilter {
+    #[default]
+    All,
+    Unread,
+    Read,
+}
+
+impl UnreadFilter {
+    /// The `unread` query value to send, or `None` to omit the parameter (All).
+    fn param(self) -> Option<&'static str> {
+        match self {
+            UnreadFilter::All => None,
+            UnreadFilter::Unread => Some("yes"),
+            UnreadFilter::Read => Some("no"),
+        }
+    }
+}
 
 /// An owned, cloneable view of a bookmark for the UI layer.
 ///
@@ -81,6 +103,10 @@ pub struct CheckResult {
 #[derive(Clone)]
 pub struct Client {
     inner: Arc<LinkDingAsyncClient>,
+    // A direct reqwest client + token for the handful of endpoints/params that
+    // `linkding-rs` doesn't parameterise (currently the `unread` list filter).
+    http: reqwest::Client,
+    token: Arc<str>,
     base_url: Arc<str>,
 }
 
@@ -92,26 +118,34 @@ pub enum ApiError {
     Message(String),
 }
 
+/// Turn a `reqwest::Error` into a user-facing hint (auth vs. network vs. other).
+fn reqwest_message(e: &reqwest::Error) -> String {
+    if let Some(status) = e.status() {
+        match status.as_u16() {
+            401 | 403 => "Authentication failed — check the API token".to_string(),
+            404 => "Not found — check the server URL".to_string(),
+            code => format!("Server returned HTTP {code}"),
+        }
+    } else if e.is_connect() || e.is_timeout() {
+        "Could not reach the server — check the URL and your network".to_string()
+    } else {
+        format!("Request failed: {e}")
+    }
+}
+
 impl From<LinkDingError> for ApiError {
     fn from(err: LinkDingError) -> Self {
-        // Try to extract a useful hint (auth vs. network) from the reqwest error.
         let msg = match &err {
-            LinkDingError::SendHttpError(e) => {
-                if let Some(status) = e.status() {
-                    match status.as_u16() {
-                        401 | 403 => "Authentication failed — check the API token".to_string(),
-                        404 => "Not found — check the server URL".to_string(),
-                        code => format!("Server returned HTTP {code}"),
-                    }
-                } else if e.is_connect() || e.is_timeout() {
-                    "Could not reach the server — check the URL and your network".to_string()
-                } else {
-                    format!("Request failed: {e}")
-                }
-            }
+            LinkDingError::SendHttpError(e) => reqwest_message(e),
             other => other.to_string(),
         };
         ApiError::Message(msg)
+    }
+}
+
+impl From<reqwest::Error> for ApiError {
+    fn from(err: reqwest::Error) -> Self {
+        ApiError::Message(reqwest_message(&err))
     }
 }
 
@@ -122,6 +156,8 @@ impl Client {
         let trimmed = url.trim_end_matches('/');
         Client {
             inner: Arc::new(LinkDingAsyncClient::new(trimmed, token)),
+            http: reqwest::Client::new(),
+            token: Arc::from(token),
             base_url: Arc::from(trimmed),
         }
     }
@@ -142,27 +178,60 @@ impl Client {
         Ok(())
     }
 
-    /// List bookmarks with an optional search query and pagination.
-    pub async fn list(&self, query: Option<String>, offset: i32) -> Result<Page, ApiError> {
-        let args = ListBookmarksArgs {
-            query: query.filter(|q| !q.trim().is_empty()),
-            limit: Some(PAGE_LIMIT),
-            offset: Some(offset),
-            ..Default::default()
-        };
-        let resp = self.inner.list_bookmarks(args).await?;
-        Ok(into_page(resp.count, resp.results))
+    /// List active bookmarks with an optional search query, read-status filter
+    /// and pagination.
+    pub async fn list(
+        &self,
+        query: Option<String>,
+        filter: UnreadFilter,
+        offset: i32,
+    ) -> Result<Page, ApiError> {
+        self.list_endpoint("/api/bookmarks/", query, filter, offset)
+            .await
     }
 
-    /// List archived bookmarks with the same query/pagination semantics.
-    pub async fn list_archived(&self, query: Option<String>, offset: i32) -> Result<Page, ApiError> {
-        let args = ListBookmarksArgs {
-            query: query.filter(|q| !q.trim().is_empty()),
-            limit: Some(PAGE_LIMIT),
-            offset: Some(offset),
-            ..Default::default()
-        };
-        let resp = self.inner.list_archived_bookmarks(args).await?;
+    /// List archived bookmarks with the same query/filter/pagination semantics.
+    pub async fn list_archived(
+        &self,
+        query: Option<String>,
+        filter: UnreadFilter,
+        offset: i32,
+    ) -> Result<Page, ApiError> {
+        self.list_endpoint("/api/bookmarks/archived/", query, filter, offset)
+            .await
+    }
+
+    /// Shared implementation for the active and archived list endpoints. Built
+    /// with a direct request because `linkding-rs`'s `ListBookmarksArgs` has no
+    /// `unread` slot; the response is deserialised into its public wire type.
+    async fn list_endpoint(
+        &self,
+        path: &str,
+        query: Option<String>,
+        filter: UnreadFilter,
+        offset: i32,
+    ) -> Result<Page, ApiError> {
+        let mut params: Vec<(&str, String)> = vec![
+            ("limit", PAGE_LIMIT.to_string()),
+            ("offset", offset.to_string()),
+        ];
+        if let Some(q) = query.filter(|q| !q.trim().is_empty()) {
+            params.push(("q", q));
+        }
+        if let Some(unread) = filter.param() {
+            params.push(("unread", unread.to_string()));
+        }
+
+        let resp: ListBookmarksResponse = self
+            .http
+            .get(format!("{}{path}", self.base_url))
+            .header("Authorization", format!("Token {}", self.token))
+            .query(&params)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
         Ok(into_page(resp.count, resp.results))
     }
 
@@ -189,6 +258,17 @@ impl Client {
     pub async fn update(&self, id: i32, draft: BookmarkDraft) -> Result<BookmarkView, ApiError> {
         let updated = self.inner.update_bookmark(id, draft.into_update_body()).await?;
         Ok(BookmarkView::from(updated))
+    }
+
+    /// Toggle just the read status of a bookmark via a minimal PATCH — leaves
+    /// all other fields untouched (unlike [`update`], which sends the full form).
+    pub async fn set_unread(&self, id: i32, unread: bool) -> Result<(), ApiError> {
+        let body = UpdateBookmarkBody {
+            unread: Some(unread),
+            ..Default::default()
+        };
+        self.inner.update_bookmark(id, body).await?;
+        Ok(())
     }
 
     /// Delete a bookmark by id.
@@ -266,5 +346,18 @@ fn into_page(total: i32, items: Vec<Bookmark>) -> Page {
     Page {
         total,
         items: items.into_iter().map(BookmarkView::from).collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unread_filter_param() {
+        assert_eq!(UnreadFilter::All.param(), None);
+        assert_eq!(UnreadFilter::Unread.param(), Some("yes"));
+        assert_eq!(UnreadFilter::Read.param(), Some("no"));
+        assert_eq!(UnreadFilter::default(), UnreadFilter::All);
     }
 }

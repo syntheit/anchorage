@@ -53,6 +53,8 @@ dependencies = [
  "libadwaita",
  "linkding-rs",
  "oo7",
+ "reqwest",
+ "serde",
  "thiserror",
  "tokio",
  "tracing",

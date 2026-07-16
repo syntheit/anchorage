@@ -28,6 +28,12 @@ linkding_rs = { package = "linkding-rs", version = "0.4", default-features = fal
 tokio = { version = "1", features = ["rt-multi-thread"] }
 async-channel = "2"
 
+# Direct HTTP for the few endpoints/params linkding-rs doesn't parameterise
+# (currently the unread list filter). Reuses linkding-rs's public wire types for
+# deserialisation. rustls to match linkding-rs (no OpenSSL).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+
 # Secret storage (server token) via the Secret Service over D-Bus.
 oo7 = "0.6"
 
