@@ -17,10 +17,17 @@ const FAVICON_SIZE: i32 = 16;
 /// Build a list row for `bookmark`. The returned row carries the bookmark id in
 /// its `widget_name` (numeric string) so activation handlers can recover it.
 ///
+/// Also returns the row's right-aligned overflow [`gtk::MenuButton`] so the list
+/// can attach the per-bookmark action popover (see `list::wire_row_menu`).
+///
 /// `favicon` is the already-resolved absolute favicon URL, or `None` when the
 /// server has favicons disabled or the bookmark has none; when present the row
 /// shows a 16px icon at the start, fetched asynchronously via `client`.
-pub fn build(client: &Client, bookmark: &BookmarkView, favicon: Option<String>) -> gtk::ListBoxRow {
+pub fn build(
+    client: &Client,
+    bookmark: &BookmarkView,
+    favicon: Option<String>,
+) -> (gtk::ListBoxRow, gtk::MenuButton) {
     let vbox = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(4)
@@ -87,7 +94,6 @@ pub fn build(client: &Client, bookmark: &BookmarkView, favicon: Option<String>) 
         .halign(gtk::Align::Start)
         .xalign(0.0)
         .ellipsize(gtk::pango::EllipsizeMode::End)
-        .hexpand(true)
         .build();
     host_date.add_css_class("dim-label");
     host_date.add_css_class("bookmark-meta");
@@ -107,6 +113,18 @@ pub fn build(client: &Client, bookmark: &BookmarkView, favicon: Option<String>) 
     for tag in bookmark.tag_names.iter().take(4) {
         meta.append(&badge(&format!("#{tag}"), None));
     }
+
+    // Right-aligned overflow menu (MoeMemos-style ⋮). Returned to the caller,
+    // which wires the per-bookmark action popover (see list::wire_row_menu).
+    let menu = gtk::MenuButton::builder()
+        .icon_name("view-more-symbolic")
+        .valign(gtk::Align::Center)
+        .halign(gtk::Align::End)
+        .hexpand(true)
+        .css_classes(["flat", "circular", "row-menu"])
+        .tooltip_text("Actions")
+        .build();
+    meta.append(&menu);
 
     vbox.append(&meta);
 
@@ -134,7 +152,7 @@ pub fn build(client: &Client, bookmark: &BookmarkView, favicon: Option<String>) 
 
     let row = gtk::ListBoxRow::builder().child(&child).build();
     row.set_widget_name(&bookmark.id.to_string());
-    row
+    (row, menu)
 }
 
 /// Fetch `url` asynchronously and, on success, replace `image`'s placeholder

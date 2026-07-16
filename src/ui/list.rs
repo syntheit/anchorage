@@ -1,6 +1,8 @@
-//! The bookmark list view: a searchable, refreshable, paginated list with
-//! per-row actions (open, edit, archive, delete + undo). Exposes a
-//! [`BookmarkList`] handle the shell uses to trigger refreshes and reads.
+//! The bookmark list view: a searchable, refreshable, paginated list. Each row
+//! carries a right-aligned overflow (⋮) menu with the full action set — open,
+//! edit, mark read/unread, archive/unarchive, copy link, and delete (confirmed)
+//! — MoeMemos-style. Exposes a [`BookmarkList`] handle the shell uses to trigger
+//! refreshes and reads.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -347,7 +349,8 @@ impl BookmarkList {
             let favicon = show_favicons
                 .then(|| super::models::resolve_favicon(base_url, &b))
                 .flatten();
-            let row = row::build(&self.inner.client, &b, favicon);
+            let (row, menu) = row::build(&self.inner.client, &b, favicon);
+            self.wire_row_menu(b.id, &menu);
             self.inner.listbox.append(&row);
             self.inner.bookmarks.borrow_mut().insert(b.id, b);
         }
@@ -361,7 +364,29 @@ impl BookmarkList {
             .set_visible_child_name(if has_rows { "list" } else { "empty" });
     }
 
-    /// Show the action menu (open / edit / archive / delete) for a row.
+    /// Attach the per-bookmark action popover to a row's overflow (⋮) menu
+    /// button. The button owns the popover, so its lifecycle is managed for us —
+    /// no manual parenting/unparenting needed (unlike [`show_actions`]).
+    fn wire_row_menu(&self, id: i32, menu: &gtk::MenuButton) {
+        let this = self.clone();
+        // Build the popover lazily on first open so it always reflects the
+        // bookmark's current state (read/unread, archived). The MenuButton owns
+        // the popover it's given, so its lifecycle is handled for us.
+        menu.set_create_popup_func(move |mb| {
+            let Some(bookmark) = this.inner.bookmarks.borrow().get(&id).cloned() else {
+                return;
+            };
+            let popover = gtk::Popover::builder().has_arrow(true).build();
+            let content = this.build_actions_menu(id, &bookmark, &popover, mb);
+            popover.set_child(Some(&content));
+            mb.set_popover(Some(&popover));
+        });
+    }
+
+    /// Show the action menu for a row via a manually-parented popover. Used by
+    /// whole-row activation (tap the row body, not the ⋮ button). Kept separate
+    /// from [`wire_row_menu`] because a manually-parented popover must be
+    /// unparented on close or every activation leaks a widget.
     fn show_actions(&self, id: i32, anchor: &gtk::ListBoxRow) {
         let Some(bookmark) = self.inner.bookmarks.borrow().get(&id).cloned() else {
             return;
@@ -373,6 +398,24 @@ impl BookmarkList {
         // when it closes — otherwise every row-action click leaks a widget.
         popover.connect_closed(|p| p.unparent());
 
+        let content = self.build_actions_menu(id, &bookmark, &popover, anchor);
+        popover.set_child(Some(&content));
+        popover.popup();
+    }
+
+    /// Build the shared action-menu content for `bookmark`: Open / Edit /
+    /// Mark read-unread / Archive-Unarchive / Copy link (share) / Delete. Each
+    /// button pops `popover` down and acts on this specific bookmark, then
+    /// refreshes the list (re-applying the active filter). `anchor` supplies the
+    /// root window for the URI launcher. Shared by [`show_actions`] and
+    /// [`wire_row_menu`].
+    fn build_actions_menu(
+        &self,
+        id: i32,
+        bookmark: &BookmarkView,
+        popover: &gtk::Popover,
+        anchor: &impl IsA<gtk::Widget>,
+    ) -> gtk::Box {
         let vbox = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(2)
@@ -394,21 +437,12 @@ impl BookmarkList {
 
         let open_b = make("Open in browser", "web-browser-symbolic");
         let edit_b = make("Edit", "document-edit-symbolic");
-        // Toggle read status: label + icon reflect the action, not the state.
-        let (read_label, read_icon) = if bookmark.unread {
-            ("Mark as read", "object-select-symbolic")
-        } else {
-            ("Mark as unread", "mail-mark-important-symbolic")
-        };
+        let (read_label, read_icon) = super::models::read_action(bookmark.unread);
         let read_b = make(read_label, read_icon);
-        // Distinct icons so archive/unarchive don't read as "delete": a
-        // put-away box for Archive, a restore glyph for Unarchive.
-        let (archive_label, archive_icon) = if self.inner.scope == Scope::Archived {
-            ("Unarchive", "view-restore-symbolic")
-        } else {
-            ("Archive", "folder-download-symbolic")
-        };
+        let (archive_label, archive_icon) =
+            super::models::archive_action(self.inner.scope == Scope::Archived);
         let archive_b = make(archive_label, archive_icon);
+        let share_b = make("Copy link", "edit-copy-symbolic");
         let delete_b = make("Delete", "edit-delete-symbolic");
         delete_b.add_css_class("destructive-action");
 
@@ -416,9 +450,9 @@ impl BookmarkList {
         vbox.append(&edit_b);
         vbox.append(&read_b);
         vbox.append(&archive_b);
+        vbox.append(&share_b);
         vbox.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         vbox.append(&delete_b);
-        popover.set_child(Some(&vbox));
 
         // Open in browser.
         open_b.connect_clicked(clone!(
@@ -482,6 +516,17 @@ impl BookmarkList {
             }
         ));
 
+        // Share — copy the bookmark URL to the clipboard.
+        share_b.connect_clicked(clone!(
+            #[strong] popover,
+            #[strong(rename_to = url)] bookmark.url,
+            #[strong(rename_to = this)] self,
+            move |_| {
+                popover.popdown();
+                this.copy_url(&url);
+            }
+        ));
+
         // Delete (with confirmation).
         delete_b.connect_clicked(clone!(
             #[strong] popover,
@@ -492,7 +537,14 @@ impl BookmarkList {
             }
         ));
 
-        popover.popup();
+        vbox
+    }
+
+    /// Copy `url` to the display clipboard and toast confirmation. This is the
+    /// "Share" action; a desktop share portal could layer on later.
+    fn copy_url(&self, url: &str) {
+        self.content.clipboard().set_text(url);
+        super::toast(&self.inner.toasts, "Link copied to clipboard");
     }
 
     /// Set the read status of a bookmark and refresh so the list reflects the

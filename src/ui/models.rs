@@ -82,6 +82,28 @@ fn first_non_empty<const N: usize>(candidates: [&str; N]) -> &str {
         .unwrap_or("")
 }
 
+/// Label + icon for the read-status toggle in the row action menu. The action
+/// reflects what the click *does*, not the current state: an unread bookmark
+/// offers "Mark as read", and vice-versa.
+pub fn read_action(unread: bool) -> (&'static str, &'static str) {
+    if unread {
+        ("Mark as read", "object-select-symbolic")
+    } else {
+        ("Mark as unread", "mail-mark-important-symbolic")
+    }
+}
+
+/// Label + icon for the archive toggle in the row action menu. In the archived
+/// list the action is "Unarchive"; elsewhere it's "Archive". Distinct icons keep
+/// it from reading as "delete".
+pub fn archive_action(is_archived_scope: bool) -> (&'static str, &'static str) {
+    if is_archived_scope {
+        ("Unarchive", "view-restore-symbolic")
+    } else {
+        ("Archive", "folder-download-symbolic")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +177,22 @@ mod tests {
     fn first_non_empty_picks() {
         assert_eq!(first_non_empty(["", "  ", "x"]), "x");
         assert_eq!(first_non_empty(["", ""]), "");
+    }
+
+    #[test]
+    fn read_action_reflects_click_not_state() {
+        // Unread bookmark → the action reads it (Mark as read).
+        assert_eq!(read_action(true).0, "Mark as read");
+        // Read bookmark → the action unreads it.
+        assert_eq!(read_action(false).0, "Mark as unread");
+        // Icons differ so the two states are visually distinct.
+        assert_ne!(read_action(true).1, read_action(false).1);
+    }
+
+    #[test]
+    fn archive_action_depends_on_scope() {
+        assert_eq!(archive_action(true).0, "Unarchive");
+        assert_eq!(archive_action(false).0, "Archive");
+        assert_ne!(archive_action(true).1, archive_action(false).1);
     }
 }

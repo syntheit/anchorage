@@ -24,6 +24,9 @@ const APP_CSS: &str = "
 .bookmark-title { font-weight: bold; }
 .bookmark-meta { font-size: 0.85em; }
 .bookmark-notes { font-style: italic; font-size: 0.9em; }
+/* The per-row overflow (⋮) menu button: subtle until hovered/opened. */
+.row-menu { min-width: 24px; min-height: 24px; padding: 0; opacity: 0.55; }
+.row-menu:hover, .row-menu:checked { opacity: 1; }
 ";
 
 /// Install the app stylesheet. Call once at application startup.
