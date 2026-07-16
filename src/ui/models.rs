@@ -34,6 +34,27 @@ pub fn display_notes(b: &BookmarkView) -> Option<String> {
     (!collapsed.is_empty()).then_some(collapsed)
 }
 
+/// Resolve a bookmark's `favicon_url` to an absolute URL suitable for fetching.
+///
+/// Linkding usually returns an absolute URL, but depending on server config it
+/// can be relative (e.g. `/static/favicons/x.png`); resolve those against
+/// `base_url`. Returns `None` when the bookmark has no favicon. Linkding serves
+/// the image itself — we never fall back to a third-party favicon service.
+pub fn resolve_favicon(base_url: &str, b: &BookmarkView) -> Option<String> {
+    let raw = b.favicon_url.as_deref()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if raw.starts_with("http://") || raw.starts_with("https://") {
+        return Some(raw.to_string());
+    }
+    // Relative path: join onto the server base.
+    url::Url::parse(base_url)
+        .ok()
+        .and_then(|base| base.join(raw).ok())
+        .map(|u| u.to_string())
+}
+
 /// The host portion of the URL (`https://news.ycombinator.com/x` → `news.ycombinator.com`).
 /// Falls back to the raw URL when it can't be parsed.
 pub fn host(url_str: &str) -> String {
@@ -65,16 +86,17 @@ fn first_non_empty<const N: usize>(candidates: [&str; N]) -> &str {
 mod tests {
     use super::*;
 
-    fn bookmark_with_notes(notes: &str) -> BookmarkView {
+    fn sample_bookmark() -> BookmarkView {
         BookmarkView {
             id: 1,
             url: "https://example.com".into(),
             title: String::new(),
             description: String::new(),
-            notes: notes.into(),
+            notes: String::new(),
             tag_names: Vec::new(),
             website_title: None,
             website_description: None,
+            favicon_url: None,
             unread: false,
             shared: false,
             is_archived: false,
@@ -84,12 +106,37 @@ mod tests {
 
     #[test]
     fn notes_snippet() {
+        let mut b = sample_bookmark();
+        b.notes = "first line\n\nsecond   line".into();
         assert_eq!(
-            display_notes(&bookmark_with_notes("first line\n\nsecond   line")),
+            display_notes(&b),
             Some("first line second line".to_string())
         );
-        assert_eq!(display_notes(&bookmark_with_notes("   \n  ")), None);
-        assert_eq!(display_notes(&bookmark_with_notes("")), None);
+        b.notes = "   \n  ".into();
+        assert_eq!(display_notes(&b), None);
+        b.notes = String::new();
+        assert_eq!(display_notes(&b), None);
+    }
+
+    #[test]
+    fn favicon_resolution() {
+        let mut b = sample_bookmark();
+        // No favicon.
+        assert_eq!(resolve_favicon("https://ld.example.com", &b), None);
+        b.favicon_url = Some("   ".into());
+        assert_eq!(resolve_favicon("https://ld.example.com", &b), None);
+        // Absolute URL is passed through.
+        b.favicon_url = Some("https://ld.example.com/static/x.png".into());
+        assert_eq!(
+            resolve_favicon("https://ld.example.com", &b),
+            Some("https://ld.example.com/static/x.png".to_string())
+        );
+        // Relative path is joined onto the base.
+        b.favicon_url = Some("/static/favicons/y.png".into());
+        assert_eq!(
+            resolve_favicon("https://ld.example.com", &b),
+            Some("https://ld.example.com/static/favicons/y.png".to_string())
+        );
     }
 
     #[test]

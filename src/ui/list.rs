@@ -45,6 +45,9 @@ struct Inner {
     offset: Cell<i32>,
     total: Cell<i32>,
     loading: Cell<bool>,
+    // Whether the server has favicons enabled; fetched once, rows read it to
+    // decide whether to show a leading icon.
+    favicons_enabled: Cell<bool>,
     debounce: RefCell<Option<glib::SourceId>>,
 }
 
@@ -127,6 +130,7 @@ impl BookmarkList {
             offset: Cell::new(0),
             total: Cell::new(0),
             loading: Cell::new(false),
+            favicons_enabled: Cell::new(false),
             debounce: RefCell::new(None),
         });
 
@@ -139,8 +143,27 @@ impl BookmarkList {
         this.wire_filter(&filter_read, UnreadFilter::Read);
         this.wire_pagination(&scroller);
         this.wire_row_activation();
+        this.load_favicon_capability();
 
         this
+    }
+
+    /// Fetch the server's favicon capability once. If enabled, re-render any rows
+    /// already shown so their favicons appear.
+    fn load_favicon_capability(&self) {
+        let client = self.inner.client.clone();
+        let this = self.clone();
+        runtime::spawn(
+            async move { client.favicons_enabled().await },
+            move |result| {
+                if matches!(result, Ok(true)) && !this.inner.favicons_enabled.replace(true) {
+                    // Only re-render if we've already loaded rows without favicons.
+                    if this.inner.listbox.first_child().is_some() {
+                        this.refresh();
+                    }
+                }
+            },
+        );
     }
 
     /// The content widget to embed as a view-stack child.
@@ -318,8 +341,13 @@ impl BookmarkList {
     }
 
     fn append_page(&self, items: Vec<BookmarkView>) {
+        let show_favicons = self.inner.favicons_enabled.get();
+        let base_url = self.inner.client.base_url();
         for b in items {
-            let row = row::build(&b);
+            let favicon = show_favicons
+                .then(|| super::models::resolve_favicon(base_url, &b))
+                .flatten();
+            let row = row::build(&self.inner.client, &b, favicon);
             self.inner.listbox.append(&row);
             self.inner.bookmarks.borrow_mut().insert(b.id, b);
         }

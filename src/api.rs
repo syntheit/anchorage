@@ -57,6 +57,7 @@ pub struct BookmarkView {
     pub tag_names: Vec<String>,
     pub website_title: Option<String>,
     pub website_description: Option<String>,
+    pub favicon_url: Option<String>,
     pub unread: bool,
     pub shared: bool,
     pub is_archived: bool,
@@ -74,6 +75,7 @@ impl From<Bookmark> for BookmarkView {
             tag_names: b.tag_names,
             website_title: b.website_title,
             website_description: b.website_description,
+            favicon_url: b.favicon_url,
             unread: b.unread,
             shared: b.shared,
             is_archived: b.is_archived,
@@ -104,7 +106,8 @@ pub struct CheckResult {
 pub struct Client {
     inner: Arc<LinkDingAsyncClient>,
     // A direct reqwest client + token for the handful of endpoints/params that
-    // `linkding-rs` doesn't parameterise (currently the `unread` list filter).
+    // `linkding-rs` doesn't parameterise (the `unread` list filter and the
+    // `enable_favicons` profile flag).
     http: reqwest::Client,
     token: Arc<str>,
     base_url: Arc<str>,
@@ -298,6 +301,46 @@ impl Client {
         };
         Ok(self.inner.list_tags(args).await?.results)
     }
+
+    /// Fetch the raw bytes of a favicon (or any small image) at `url`. Used by
+    /// list rows to render the site favicon. Includes the auth token in case the
+    /// server gates static files behind it.
+    pub async fn fetch_favicon(&self, url: &str) -> Result<Vec<u8>, ApiError> {
+        let bytes = self
+            .http
+            .get(url)
+            .header("Authorization", format!("Token {}", self.token))
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await?;
+        Ok(bytes.to_vec())
+    }
+
+    /// Whether the server has favicons enabled (`enable_favicons` in the user
+    /// profile). When off, `favicon_url` is absent from bookmark responses.
+    /// `linkding-rs`'s `UserProfile` keeps its fields private, so we read just
+    /// the flag we need directly.
+    pub async fn favicons_enabled(&self) -> Result<bool, ApiError> {
+        let profile: ProfileFlags = self
+            .http
+            .get(format!("{}/api/user/profile/", self.base_url))
+            .header("Authorization", format!("Token {}", self.token))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(profile.enable_favicons)
+    }
+}
+
+/// The single user-profile flag we care about; the rest of the response is
+/// ignored by serde.
+#[derive(serde::Deserialize)]
+struct ProfileFlags {
+    enable_favicons: bool,
 }
 
 /// A user-editable bookmark draft shared by the create and edit flows.

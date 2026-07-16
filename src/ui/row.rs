@@ -2,15 +2,25 @@
 //! tag / status badges. Built as a plain `gtk::ListBoxRow` (an `AdwActionRow`
 //! is too constrained for the multi-line + badges layout).
 
+use gtk::gdk;
+use gtk::glib;
 use gtk::prelude::*;
 
-use crate::api::BookmarkView;
+use crate::api::{BookmarkView, Client};
+use crate::runtime;
 
 use super::models;
 
+/// Rendered pixel size of the row favicon.
+const FAVICON_SIZE: i32 = 16;
+
 /// Build a list row for `bookmark`. The returned row carries the bookmark id in
 /// its `widget_name` (numeric string) so activation handlers can recover it.
-pub fn build(bookmark: &BookmarkView) -> gtk::ListBoxRow {
+///
+/// `favicon` is the already-resolved absolute favicon URL, or `None` when the
+/// server has favicons disabled or the bookmark has none; when present the row
+/// shows a 16px icon at the start, fetched asynchronously via `client`.
+pub fn build(client: &Client, bookmark: &BookmarkView, favicon: Option<String>) -> gtk::ListBoxRow {
     let vbox = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(4)
@@ -100,9 +110,51 @@ pub fn build(bookmark: &BookmarkView) -> gtk::ListBoxRow {
 
     vbox.append(&meta);
 
-    let row = gtk::ListBoxRow::builder().child(&vbox).build();
+    // Optional leading favicon. Absent when the server has favicons disabled.
+    let child: gtk::Widget = match favicon {
+        Some(url) => {
+            let image = gtk::Image::builder()
+                .pixel_size(FAVICON_SIZE)
+                .icon_name("web-browser-symbolic") // placeholder until loaded
+                .valign(gtk::Align::Start)
+                .margin_start(12)
+                .margin_top(12)
+                .build();
+            load_favicon(client, &image, url);
+
+            let hbox = gtk::Box::builder()
+                .orientation(gtk::Orientation::Horizontal)
+                .build();
+            hbox.append(&image);
+            hbox.append(&vbox);
+            hbox.upcast()
+        }
+        None => vbox.upcast(),
+    };
+
+    let row = gtk::ListBoxRow::builder().child(&child).build();
     row.set_widget_name(&bookmark.id.to_string());
     row
+}
+
+/// Fetch `url` asynchronously and, on success, replace `image`'s placeholder
+/// with the decoded texture. Failures leave the placeholder in place — favicons
+/// are decorative, so we degrade silently.
+fn load_favicon(client: &Client, image: &gtk::Image, url: String) {
+    let client = client.clone();
+    let image = image.downgrade();
+    runtime::spawn(
+        async move { client.fetch_favicon(&url).await },
+        move |result| {
+            let Some(image) = image.upgrade() else { return };
+            if let Ok(bytes) = result {
+                let bytes = glib::Bytes::from_owned(bytes);
+                if let Ok(texture) = gdk::Texture::from_bytes(&bytes) {
+                    image.set_paintable(Some(&texture));
+                }
+            }
+        },
+    );
 }
 
 /// Recover the bookmark id stored on a row by [`build`].
