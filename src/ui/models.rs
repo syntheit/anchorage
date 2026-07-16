@@ -26,6 +26,14 @@ pub fn display_description(b: &BookmarkView) -> Option<String> {
     (!candidate.is_empty()).then(|| candidate.to_string())
 }
 
+/// The notes snippet to show, or `None` when the bookmark has no notes (so the
+/// row can hide the label). Notes are Markdown on the server; we show the raw
+/// text collapsed to a single spaced line — enough context for the list.
+pub fn display_notes(b: &BookmarkView) -> Option<String> {
+    let collapsed = b.notes.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!collapsed.is_empty()).then_some(collapsed)
+}
+
 /// The host portion of the URL (`https://news.ycombinator.com/x` → `news.ycombinator.com`).
 /// Falls back to the raw URL when it can't be parsed.
 pub fn host(url_str: &str) -> String {
@@ -56,6 +64,33 @@ fn first_non_empty<const N: usize>(candidates: [&str; N]) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bookmark_with_notes(notes: &str) -> BookmarkView {
+        BookmarkView {
+            id: 1,
+            url: "https://example.com".into(),
+            title: String::new(),
+            description: String::new(),
+            notes: notes.into(),
+            tag_names: Vec::new(),
+            website_title: None,
+            website_description: None,
+            unread: false,
+            shared: false,
+            is_archived: false,
+            date_added: String::new(),
+        }
+    }
+
+    #[test]
+    fn notes_snippet() {
+        assert_eq!(
+            display_notes(&bookmark_with_notes("first line\n\nsecond   line")),
+            Some("first line second line".to_string())
+        );
+        assert_eq!(display_notes(&bookmark_with_notes("   \n  ")), None);
+        assert_eq!(display_notes(&bookmark_with_notes("")), None);
+    }
 
     #[test]
     fn host_extraction() {

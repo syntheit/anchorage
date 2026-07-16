@@ -46,7 +46,23 @@ pub fn build(bookmark: &BookmarkView) -> gtk::ListBoxRow {
         vbox.append(&label);
     }
 
-    // Row 3: host · date + badges.
+    // Row 3: notes snippet (up to 2 lines), if present.
+    if let Some(notes) = models::display_notes(bookmark) {
+        let label = gtk::Label::builder()
+            .label(notes)
+            .halign(gtk::Align::Start)
+            .xalign(0.0)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .lines(2)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build();
+        label.add_css_class("dim-label");
+        label.add_css_class("bookmark-notes");
+        vbox.append(&label);
+    }
+
+    // Row 4: host · date + badges.
     let meta = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(6)

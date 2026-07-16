@@ -23,6 +23,7 @@ const APP_CSS: &str = "
 .badge.shared { background-color: alpha(@success_color, 0.20); color: @success_color; }
 .bookmark-title { font-weight: bold; }
 .bookmark-meta { font-size: 0.85em; }
+.bookmark-notes { font-style: italic; font-size: 0.9em; }
 ";
 
 /// Install the app stylesheet. Call once at application startup.
