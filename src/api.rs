@@ -128,6 +128,21 @@ pub struct Page {
     pub items: Vec<BookmarkView>,
 }
 
+/// A page of tags with the total count (for the tags screen's pagination).
+/// `TagData` isn't `Clone`, so neither is this — callers consume it directly.
+#[derive(Debug)]
+pub struct TagsPage {
+    pub total: i32,
+    pub items: Vec<TagData>,
+}
+
+/// Build the bookmark search query that filters the list to a single tag, i.e.
+/// Linkding's `#tagname` syntax in the `q` param. Trims and strips a leading
+/// `#` so it's safe to pass either a bare name or an already-`#`-prefixed one.
+pub fn tag_search_query(tag: &str) -> String {
+    format!("#{}", tag.trim().trim_start_matches('#'))
+}
+
 /// The result of checking a URL: the existing bookmark (if any), scraped
 /// title/description, and suggested tags.
 #[derive(Clone, Debug, Default)]
@@ -337,11 +352,26 @@ impl Client {
     /// List all tags (first page only; Linkding installs rarely exceed 100 tags,
     /// but callers can page via `offset` if needed).
     pub async fn tags(&self, offset: i32) -> Result<Vec<TagData>, ApiError> {
+        Ok(self.tags_page(offset).await?.items)
+    }
+
+    /// A page of tags with the total count, for the paginated tags screen.
+    pub async fn tags_page(&self, offset: i32) -> Result<TagsPage, ApiError> {
         let args = ListTagsArgs {
             limit: Some(PAGE_LIMIT),
             offset: Some(offset),
         };
-        Ok(self.inner.list_tags(args).await?.results)
+        let resp = self.inner.list_tags(args).await?;
+        Ok(TagsPage {
+            total: resp.count,
+            items: resp.results,
+        })
+    }
+
+    /// Create a tag by name. Linkding returns the created (or existing, since
+    /// names are unique) tag.
+    pub async fn create_tag(&self, name: &str) -> Result<TagData, ApiError> {
+        Ok(self.inner.create_tag(name).await?)
     }
 
     /// Fetch the raw bytes of a favicon (or any small image) at `url`. Used by
@@ -454,5 +484,13 @@ mod tests {
         assert_eq!(SortOrder::TitleDesc.param(), "title_desc");
         // Default is newest-first, matching Linkding.
         assert_eq!(SortOrder::default(), SortOrder::DateDesc);
+    }
+
+    #[test]
+    fn tag_query_building() {
+        assert_eq!(tag_search_query("rust"), "#rust");
+        // Already-prefixed and padded input normalise to a single leading '#'.
+        assert_eq!(tag_search_query("#rust"), "#rust");
+        assert_eq!(tag_search_query("  gtk  "), "#gtk");
     }
 }

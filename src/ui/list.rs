@@ -30,6 +30,7 @@ pub struct BookmarkList {
     /// The content widget (search bar + toast overlay/stack) — embed this directly.
     content: gtk::Box,
     search_bar: gtk::SearchBar,
+    search_entry: gtk::SearchEntry,
     inner: Rc<Inner>,
 }
 
@@ -139,7 +140,12 @@ impl BookmarkList {
             debounce: RefCell::new(None),
         });
 
-        let this = BookmarkList { content, search_bar, inner };
+        let this = BookmarkList {
+            content,
+            search_bar,
+            search_entry: search_entry.clone(),
+            inner,
+        };
 
         // Wire search entry.
         this.wire_search(&search_entry);
@@ -180,6 +186,14 @@ impl BookmarkList {
     /// The search bar for this list; the outer header binds its toggle to this.
     pub fn search_bar(&self) -> &gtk::SearchBar {
         &self.search_bar
+    }
+
+    /// Reveal the search bar and set its query to `text`. Used by the tags screen
+    /// to filter this list by `#tagname`. Setting the entry drives the existing
+    /// debounced search path, so the list refreshes and the UI stays in sync.
+    pub fn set_search(&self, text: &str) {
+        self.search_bar.set_search_mode(true);
+        self.search_entry.set_text(text);
     }
 
     /// Reload from the first page using the current query.

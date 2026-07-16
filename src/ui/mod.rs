@@ -7,6 +7,7 @@ pub mod list;
 pub mod models;
 pub mod onboarding;
 pub mod row;
+pub mod tags;
 
 use gtk::gdk;
 

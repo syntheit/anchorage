@@ -12,11 +12,12 @@ use adw::prelude::*;
 use gtk::glib;
 use gtk::glib::clone;
 
-use crate::api::Client;
+use crate::api::{tag_search_query, Client};
 use crate::config;
 use crate::runtime;
 use crate::ui::list::{BookmarkList, Scope};
 use crate::ui::onboarding;
+use crate::ui::tags::TagsView;
 
 /// Build the main window and kick off credential loading.
 pub fn build_ui(app: &adw::Application) {
@@ -110,6 +111,20 @@ fn main_page(
     let settings = settings_view(app, nav, &client);
 
     let stack = adw::ViewStack::new();
+
+    // Tapping a tag switches to the active list and filters it by `#tagname`.
+    let tags = TagsView::new(
+        client.clone(),
+        clone!(
+            #[strong] active,
+            #[strong] stack,
+            move |name| {
+                stack.set_visible_child_name("active");
+                active.set_search(&tag_search_query(name));
+            }
+        ),
+    );
+
     stack.add_titled_with_icon(
         active.widget(),
         Some("active"),
@@ -122,6 +137,7 @@ fn main_page(
         "Archived",
         "folder-symbolic",
     );
+    stack.add_titled_with_icon(tags.widget(), Some("tags"), "Tags", "tag-symbolic");
     stack.add_titled_with_icon(&settings, Some("settings"), "Settings", "emblem-system-symbolic");
 
     // --- Header buttons -------------------------------------------------------
@@ -177,11 +193,13 @@ fn main_page(
     refresh_btn.connect_clicked(clone!(
         #[strong] active,
         #[strong] archived,
+        #[strong] tags,
         #[strong] stack,
         move |_| {
             match stack.visible_child_name().as_deref() {
                 Some("active") => active.refresh(),
                 Some("archived") => archived.refresh(),
+                Some("tags") => tags.refresh(),
                 _ => {}
             }
         }
@@ -202,16 +220,19 @@ fn main_page(
     ));
 
     // On child change: re-bind search bar, toggle button visibility, and
-    // lazily load the archived list the first time it's shown.
+    // lazily load the archived/tags views the first time they're shown.
     let archived_loaded = Rc::new(std::cell::Cell::new(false));
+    let tags_loaded = Rc::new(std::cell::Cell::new(false));
     stack.connect_visible_child_name_notify(clone!(
         #[strong] active,
         #[strong] archived,
+        #[strong] tags,
         #[strong] search_toggle,
         #[strong] refresh_btn,
         #[strong] add_btn,
         #[strong] search_binding,
         #[strong] archived_loaded,
+        #[strong] tags_loaded,
         move |stack| {
             let child = stack.visible_child_name();
             let child = child.as_deref();
@@ -247,6 +268,18 @@ fn main_page(
                     // Archived loads on first switch (active loads eagerly below).
                     if !archived_loaded.replace(true) {
                         archived.refresh();
+                    }
+                }
+                Some("tags") => {
+                    // The tags screen has its own create-tag control, no search.
+                    search_toggle.set_visible(false);
+                    refresh_btn.set_visible(true);
+                    add_btn.set_visible(false);
+                    search_toggle.set_active(false);
+
+                    // Tags load on first switch.
+                    if !tags_loaded.replace(true) {
+                        tags.refresh();
                     }
                 }
                 _ => {
