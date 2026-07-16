@@ -41,6 +41,43 @@ impl UnreadFilter {
     }
 }
 
+/// Sort order for the bookmark list, mapping to Linkding's `sort` query
+/// parameter (`added_desc/added_asc/title_asc/title_desc`). Confirmed in
+/// Linkding's `BookmarkSearch` even though it's absent from the public API.md.
+/// `linkding-rs` doesn't expose this param, so the list calls build the request
+/// directly (see [`Client::list_endpoint`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SortOrder {
+    /// Newest first — Linkding's default.
+    #[default]
+    DateDesc,
+    DateAsc,
+    TitleAsc,
+    TitleDesc,
+}
+
+impl SortOrder {
+    /// The ordered options for the sort selector: `(variant, human label)`.
+    /// Kept here so the UI and the wire mapping can't drift apart.
+    pub const CHOICES: [(SortOrder, &'static str); 4] = [
+        (SortOrder::DateDesc, "Newest first"),
+        (SortOrder::DateAsc, "Oldest first"),
+        (SortOrder::TitleAsc, "Title A\u{2013}Z"),
+        (SortOrder::TitleDesc, "Title Z\u{2013}A"),
+    ];
+
+    /// The `sort` query value to send. Sent explicitly on every request so the
+    /// order is deterministic regardless of the server's default preference.
+    fn param(self) -> &'static str {
+        match self {
+            SortOrder::DateDesc => "added_desc",
+            SortOrder::DateAsc => "added_asc",
+            SortOrder::TitleAsc => "title_asc",
+            SortOrder::TitleDesc => "title_desc",
+        }
+    }
+}
+
 /// An owned, cloneable view of a bookmark for the UI layer.
 ///
 /// `linkding_rs::Bookmark` deliberately doesn't derive `Clone`, and coupling the
@@ -181,42 +218,47 @@ impl Client {
         Ok(())
     }
 
-    /// List active bookmarks with an optional search query, read-status filter
-    /// and pagination.
+    /// List active bookmarks with an optional search query, read-status filter,
+    /// sort order and pagination.
     pub async fn list(
         &self,
         query: Option<String>,
         filter: UnreadFilter,
+        sort: SortOrder,
         offset: i32,
     ) -> Result<Page, ApiError> {
-        self.list_endpoint("/api/bookmarks/", query, filter, offset)
+        self.list_endpoint("/api/bookmarks/", query, filter, sort, offset)
             .await
     }
 
-    /// List archived bookmarks with the same query/filter/pagination semantics.
+    /// List archived bookmarks with the same query/filter/sort/pagination semantics.
     pub async fn list_archived(
         &self,
         query: Option<String>,
         filter: UnreadFilter,
+        sort: SortOrder,
         offset: i32,
     ) -> Result<Page, ApiError> {
-        self.list_endpoint("/api/bookmarks/archived/", query, filter, offset)
+        self.list_endpoint("/api/bookmarks/archived/", query, filter, sort, offset)
             .await
     }
 
     /// Shared implementation for the active and archived list endpoints. Built
     /// with a direct request because `linkding-rs`'s `ListBookmarksArgs` has no
-    /// `unread` slot; the response is deserialised into its public wire type.
+    /// `unread` or `sort` slot; the response is deserialised into its public
+    /// wire type.
     async fn list_endpoint(
         &self,
         path: &str,
         query: Option<String>,
         filter: UnreadFilter,
+        sort: SortOrder,
         offset: i32,
     ) -> Result<Page, ApiError> {
         let mut params: Vec<(&str, String)> = vec![
             ("limit", PAGE_LIMIT.to_string()),
             ("offset", offset.to_string()),
+            ("sort", sort.param().to_string()),
         ];
         if let Some(q) = query.filter(|q| !q.trim().is_empty()) {
             params.push(("q", q));
@@ -402,5 +444,15 @@ mod tests {
         assert_eq!(UnreadFilter::Unread.param(), Some("yes"));
         assert_eq!(UnreadFilter::Read.param(), Some("no"));
         assert_eq!(UnreadFilter::default(), UnreadFilter::All);
+    }
+
+    #[test]
+    fn sort_order_param() {
+        assert_eq!(SortOrder::DateDesc.param(), "added_desc");
+        assert_eq!(SortOrder::DateAsc.param(), "added_asc");
+        assert_eq!(SortOrder::TitleAsc.param(), "title_asc");
+        assert_eq!(SortOrder::TitleDesc.param(), "title_desc");
+        // Default is newest-first, matching Linkding.
+        assert_eq!(SortOrder::default(), SortOrder::DateDesc);
     }
 }

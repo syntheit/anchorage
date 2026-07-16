@@ -12,7 +12,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use gtk::glib::{self, clone};
 
-use crate::api::{BookmarkView, Client, UnreadFilter};
+use crate::api::{BookmarkView, Client, SortOrder, UnreadFilter};
 use crate::runtime;
 
 use super::{add_sheet, row};
@@ -44,6 +44,7 @@ struct Inner {
     bookmarks: RefCell<HashMap<i32, BookmarkView>>,
     query: RefCell<String>,
     filter: Cell<UnreadFilter>,
+    sort: Cell<SortOrder>,
     offset: Cell<i32>,
     total: Cell<i32>,
     loading: Cell<bool>,
@@ -109,8 +110,9 @@ impl BookmarkList {
             .build();
         search_bar.connect_entry(&search_entry);
 
-        // Read-status filter: All / Unread / Read as a linked toggle group.
-        let (filter_bar, filter_all, filter_unread, filter_read) = build_filter_bar();
+        // Read-status filter: All / Unread / Read as a linked toggle group,
+        // with a compact sort selector on the trailing edge.
+        let (filter_bar, filter_all, filter_unread, filter_read, sort_menu) = build_filter_bar();
 
         let content = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -129,6 +131,7 @@ impl BookmarkList {
             bookmarks: RefCell::new(HashMap::new()),
             query: RefCell::new(String::new()),
             filter: Cell::new(UnreadFilter::All),
+            sort: Cell::new(SortOrder::default()),
             offset: Cell::new(0),
             total: Cell::new(0),
             loading: Cell::new(false),
@@ -143,6 +146,7 @@ impl BookmarkList {
         this.wire_filter(&filter_all, UnreadFilter::All);
         this.wire_filter(&filter_unread, UnreadFilter::Unread);
         this.wire_filter(&filter_read, UnreadFilter::Read);
+        this.wire_sort(&sort_menu);
         this.wire_pagination(&scroller);
         this.wire_row_activation();
         this.load_favicon_capability();
@@ -249,6 +253,46 @@ impl BookmarkList {
         });
     }
 
+    /// Wire the sort selector: each option applies its `SortOrder` and refreshes
+    /// (only on a real change). The choice persists for the session in
+    /// `Inner::sort`, so it survives searches and filter changes.
+    fn wire_sort(&self, menu: &gtk::MenuButton) {
+        let popover = gtk::Popover::builder().has_arrow(true).build();
+        let vbox = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(2)
+            .build();
+
+        // Radio group: exactly one option checked, seeded from the current sort.
+        let current = self.inner.sort.get();
+        let mut group: Option<gtk::CheckButton> = None;
+        for (order, label) in SortOrder::CHOICES {
+            let check = gtk::CheckButton::builder()
+                .label(label)
+                .active(order == current)
+                .build();
+            if let Some(first) = &group {
+                check.set_group(Some(first));
+            } else {
+                group = Some(check.clone());
+            }
+            let this = self.clone();
+            let popover = popover.clone();
+            check.connect_toggled(move |c| {
+                // Only the newly-activated button triggers a reload; the
+                // deactivated one also emits `toggled`.
+                if c.is_active() && this.inner.sort.replace(order) != order {
+                    popover.popdown();
+                    this.refresh();
+                }
+            });
+            vbox.append(&check);
+        }
+
+        popover.set_child(Some(&vbox));
+        menu.set_popover(Some(&popover));
+    }
+
     /// Debounce search input by 300ms, then refresh with the new query.
     fn schedule_search(&self, text: String) {
         // Cancel any pending timer.
@@ -311,6 +355,7 @@ impl BookmarkList {
 
         let query = self.inner.query.borrow().clone();
         let filter = self.inner.filter.get();
+        let sort = self.inner.sort.get();
         let offset = self.inner.offset.get();
         let client = self.inner.client.clone();
         let scope = self.inner.scope;
@@ -320,8 +365,8 @@ impl BookmarkList {
         runtime::spawn(
             async move {
                 match scope {
-                    Scope::Active => client.list(query_opt, filter, offset).await,
-                    Scope::Archived => client.list_archived(query_opt, filter, offset).await,
+                    Scope::Active => client.list(query_opt, filter, sort, offset).await,
+                    Scope::Archived => client.list_archived(query_opt, filter, sort, offset).await,
                 }
             },
             move |result| {
@@ -635,10 +680,18 @@ impl BookmarkList {
     }
 }
 
-/// Build the read-status filter bar: three linked, exclusive toggle buttons.
-/// Returns the container plus the individual buttons for wiring. "All" starts
-/// active to match [`UnreadFilter::All`], the list's default.
-fn build_filter_bar() -> (gtk::Box, gtk::ToggleButton, gtk::ToggleButton, gtk::ToggleButton) {
+/// Build the filter/sort bar: three linked, exclusive read-status toggles in the
+/// centre, with a trailing sort selector (a menu button whose popover is wired
+/// by [`BookmarkList::wire_sort`]). Returns the container plus the individual
+/// controls for wiring. "All" starts active to match [`UnreadFilter::All`], the
+/// list's default.
+fn build_filter_bar() -> (
+    gtk::Box,
+    gtk::ToggleButton,
+    gtk::ToggleButton,
+    gtk::ToggleButton,
+    gtk::MenuButton,
+) {
     let all = gtk::ToggleButton::builder().label("All").active(true).build();
     let unread = gtk::ToggleButton::builder().label("Unread").build();
     let read = gtk::ToggleButton::builder().label("Read").build();
@@ -651,14 +704,26 @@ fn build_filter_bar() -> (gtk::Box, gtk::ToggleButton, gtk::ToggleButton, gtk::T
     group.append(&unread);
     group.append(&read);
 
+    let sort_menu = gtk::MenuButton::builder()
+        .icon_name("view-sort-descending-symbolic")
+        .tooltip_text("Sort")
+        .css_classes(["flat"])
+        .valign(gtk::Align::Center)
+        .halign(gtk::Align::End)
+        .hexpand(true)
+        .build();
+
     let bar = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
-        .halign(gtk::Align::Center)
         .margin_top(6)
         .margin_start(6)
         .margin_end(6)
         .build();
+    // A leading spacer mirrors the trailing sort button so the toggle group
+    // stays visually centred.
+    bar.append(&gtk::Box::builder().hexpand(true).build());
     bar.append(&group);
+    bar.append(&sort_menu);
 
-    (bar, all, unread, read)
+    (bar, all, unread, read, sort_menu)
 }
