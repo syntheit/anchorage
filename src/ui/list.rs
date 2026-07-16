@@ -94,7 +94,7 @@ impl BookmarkList {
 
         // Search bar — lives below the (outer) header bar.
         let search_entry = gtk::SearchEntry::builder()
-            .placeholder_text("Search bookmarks\u{2026}  (try #tag  !unread)")
+            .placeholder_text("Search bookmarks\u{2026}  (try #tag)")
             .hexpand(true)
             .build();
         let search_bar = gtk::SearchBar::builder()

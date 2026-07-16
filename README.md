@@ -6,7 +6,7 @@ The primary target is a phone running GNOME Shell Mobile (aarch64, ~360-430 px w
 
 ## What it does
 
-On first launch you enter your Linkding server URL and API token (Linkding → Settings → Integrations → REST API). The token is stored in your keyring via the Secret Service; the URL goes to GSettings. From there you get a bookmark list with title, host, date, tags and status badges, debounced search (supports `#tag`, `!unread`), and an add sheet that auto-fills title/description/tags by calling `/api/bookmarks/check/` when you paste a URL. You can edit, archive, unarchive, delete (with a confirmation dialog), and open bookmarks in the system browser. There's a separate archived view and tag suggestions when adding.
+On first launch you enter your Linkding server URL and API token (Linkding → Settings → Integrations → REST API). The token is stored in your keyring via the Secret Service; the URL goes to GSettings. From there you get a bookmark list with title, host, date, tags and status badges, debounced search (supports `#tag`), and an add sheet that auto-fills title/description/tags by calling `/api/bookmarks/check/` when you paste a URL. You can edit, archive, unarchive, delete (with a confirmation dialog), and open bookmarks in the system browser. There's a separate archived view and tag suggestions when adding.
 
 Layout adapts with an `AdwBreakpoint` at 550 px: bottom view-switcher on phones, header switcher on the desktop.
 
