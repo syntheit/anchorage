@@ -98,6 +98,15 @@
               glib-compile-schemas $out/share/glib-2.0/schemas
             '';
 
+            # crane doesn't stamp the GUI libraries into the binary's RPATH, so the
+            # wrapped app can't find libadwaita/gtk4/glib at runtime outside a full
+            # GNOME session. Put them on the wrapper's LD_LIBRARY_PATH.
+            preFixup = ''
+              gappsWrapperArgs+=(
+                --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath buildInputs}"
+              )
+            '';
+
             meta = with pkgs.lib; {
               description = "Native GTK4/libadwaita client for Linkding bookmarks";
               homepage = "https://github.com/syntheit/anchorage";
