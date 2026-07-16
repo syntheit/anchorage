@@ -4,9 +4,9 @@
 //! Layout:
 //!  * A `AdwNavigationView` hosts either the **connect** page (first run) or the
 //!    **main** page (once we have credentials).
-//!  * The main page is an `AdwViewStack` with *Bookmarks*, *Archived* and
-//!    *Settings* views. On wide windows the switcher lives in the header; on
-//!    narrow (phone) windows an `AdwBreakpoint` moves it to a bottom bar.
+//!  * The main page is an `AdwViewStack` with *Bookmarks*, *Archived*, *Shared*,
+//!    *Tags* and *Settings* views. On wide windows the switcher lives in the
+//!    header; on narrow (phone) windows an `AdwBreakpoint` moves it to a bottom bar.
 
 use adw::prelude::*;
 use gtk::glib;
@@ -107,6 +107,7 @@ fn main_page(
 ) -> adw::NavigationPage {
     let active = BookmarkList::new(client.clone(), Scope::Active);
     let archived = BookmarkList::new(client.clone(), Scope::Archived);
+    let shared = BookmarkList::new(client.clone(), Scope::Shared);
 
     let settings = settings_view(app, nav, &client);
 
@@ -136,6 +137,12 @@ fn main_page(
         Some("archived"),
         "Archived",
         "folder-symbolic",
+    );
+    stack.add_titled_with_icon(
+        shared.widget(),
+        Some("shared"),
+        "Shared",
+        "emblem-shared-symbolic",
     );
     stack.add_titled_with_icon(tags.widget(), Some("tags"), "Tags", "tag-symbolic");
     stack.add_titled_with_icon(&settings, Some("settings"), "Settings", "emblem-system-symbolic");
@@ -193,12 +200,14 @@ fn main_page(
     refresh_btn.connect_clicked(clone!(
         #[strong] active,
         #[strong] archived,
+        #[strong] shared,
         #[strong] tags,
         #[strong] stack,
         move |_| {
             match stack.visible_child_name().as_deref() {
                 Some("active") => active.refresh(),
                 Some("archived") => archived.refresh(),
+                Some("shared") => shared.refresh(),
                 Some("tags") => tags.refresh(),
                 _ => {}
             }
@@ -222,16 +231,19 @@ fn main_page(
     // On child change: re-bind search bar, toggle button visibility, and
     // lazily load the archived/tags views the first time they're shown.
     let archived_loaded = Rc::new(std::cell::Cell::new(false));
+    let shared_loaded = Rc::new(std::cell::Cell::new(false));
     let tags_loaded = Rc::new(std::cell::Cell::new(false));
     stack.connect_visible_child_name_notify(clone!(
         #[strong] active,
         #[strong] archived,
+        #[strong] shared,
         #[strong] tags,
         #[strong] search_toggle,
         #[strong] refresh_btn,
         #[strong] add_btn,
         #[strong] search_binding,
         #[strong] archived_loaded,
+        #[strong] shared_loaded,
         #[strong] tags_loaded,
         move |stack| {
             let child = stack.visible_child_name();
@@ -268,6 +280,23 @@ fn main_page(
                     // Archived loads on first switch (active loads eagerly below).
                     if !archived_loaded.replace(true) {
                         archived.refresh();
+                    }
+                }
+                Some("shared") => {
+                    search_toggle.set_visible(true);
+                    refresh_btn.set_visible(true);
+                    add_btn.set_visible(false);
+                    let binding = shared
+                        .search_bar()
+                        .bind_property("search-mode-enabled", &search_toggle, "active")
+                        .bidirectional()
+                        .sync_create()
+                        .build();
+                    *search_binding.borrow_mut() = Some(binding);
+
+                    // Shared loads on first switch.
+                    if !shared_loaded.replace(true) {
+                        shared.refresh();
                     }
                 }
                 Some("tags") => {

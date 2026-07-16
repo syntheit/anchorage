@@ -258,10 +258,23 @@ impl Client {
             .await
     }
 
-    /// Shared implementation for the active and archived list endpoints. Built
-    /// with a direct request because `linkding-rs`'s `ListBookmarksArgs` has no
-    /// `unread` or `sort` slot; the response is deserialised into its public
-    /// wire type.
+    /// List shared bookmarks (the user's own shared bookmarks plus any others
+    /// visible to them) with the same query/filter/sort/pagination semantics.
+    pub async fn list_shared(
+        &self,
+        query: Option<String>,
+        filter: UnreadFilter,
+        sort: SortOrder,
+        offset: i32,
+    ) -> Result<Page, ApiError> {
+        self.list_endpoint("/api/bookmarks/shared/", query, filter, sort, offset)
+            .await
+    }
+
+    /// Shared implementation for the active, archived and shared list endpoints.
+    /// Built with a direct request because `linkding-rs`'s `ListBookmarksArgs`
+    /// has no `unread` or `sort` slot; the response is deserialised into its
+    /// public wire type.
     async fn list_endpoint(
         &self,
         path: &str,

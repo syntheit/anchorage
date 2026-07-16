@@ -22,6 +22,7 @@ use super::{add_sheet, row};
 pub enum Scope {
     Active,
     Archived,
+    Shared,
 }
 
 /// A self-contained bookmark list widget + its state.
@@ -79,6 +80,7 @@ impl BookmarkList {
             .description(match scope {
                 Scope::Active => "Add one with the + button, or adjust your search.",
                 Scope::Archived => "Nothing archived yet.",
+                Scope::Shared => "No shared bookmarks yet.",
             })
             .build();
 
@@ -188,12 +190,20 @@ impl BookmarkList {
         &self.search_bar
     }
 
-    /// Reveal the search bar and set its query to `text`. Used by the tags screen
-    /// to filter this list by `#tagname`. Setting the entry drives the existing
-    /// debounced search path, so the list refreshes and the UI stays in sync.
+    /// Reveal the search bar and set its query to `text`, then refresh. Used by
+    /// the tags screen to filter this list by `#tagname`. The refresh is driven
+    /// explicitly (not via the entry's change signal) so re-selecting the same
+    /// tag still reloads — GTK suppresses `search-changed` when the text is
+    /// unchanged.
     pub fn set_search(&self, text: &str) {
         self.search_bar.set_search_mode(true);
         self.search_entry.set_text(text);
+        // Cancel any pending debounce and apply immediately.
+        if let Some(id) = self.inner.debounce.borrow_mut().take() {
+            id.remove();
+        }
+        *self.inner.query.borrow_mut() = text.to_string();
+        self.refresh();
     }
 
     /// Reload from the first page using the current query.
@@ -381,6 +391,7 @@ impl BookmarkList {
                 match scope {
                     Scope::Active => client.list(query_opt, filter, sort, offset).await,
                     Scope::Archived => client.list_archived(query_opt, filter, sort, offset).await,
+                    Scope::Shared => client.list_shared(query_opt, filter, sort, offset).await,
                 }
             },
             move |result| {
@@ -494,24 +505,15 @@ impl BookmarkList {
             b
         };
 
+        // The shared view can surface bookmarks the user doesn't own, where
+        // edit/archive/delete/read would 403. Keep only the read-oriented
+        // actions (open, copy link) there.
+        let mutable = self.inner.scope != Scope::Shared;
+
         let open_b = make("Open in browser", "web-browser-symbolic");
-        let edit_b = make("Edit", "document-edit-symbolic");
-        let (read_label, read_icon) = super::models::read_action(bookmark.unread);
-        let read_b = make(read_label, read_icon);
-        let (archive_label, archive_icon) =
-            super::models::archive_action(self.inner.scope == Scope::Archived);
-        let archive_b = make(archive_label, archive_icon);
         let share_b = make("Copy link", "edit-copy-symbolic");
-        let delete_b = make("Delete", "edit-delete-symbolic");
-        delete_b.add_css_class("destructive-action");
 
         vbox.append(&open_b);
-        vbox.append(&edit_b);
-        vbox.append(&read_b);
-        vbox.append(&archive_b);
-        vbox.append(&share_b);
-        vbox.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        vbox.append(&delete_b);
 
         // Open in browser.
         open_b.connect_clicked(clone!(
@@ -534,46 +536,61 @@ impl BookmarkList {
             }
         ));
 
-        // Edit.
-        edit_b.connect_clicked(clone!(
-            #[strong] popover,
-            #[strong] bookmark,
-            #[strong(rename_to = this)] self,
-            move |_| {
-                popover.popdown();
-                let this2 = this.clone();
-                add_sheet::open_edit(
-                    this.widget(),
-                    this.inner.client.clone(),
-                    bookmark.clone(),
-                    move |msg| {
-                        super::toast(&this2.inner.toasts, &msg);
-                        this2.refresh();
-                    },
-                );
-            }
-        ));
+        if mutable {
+            let edit_b = make("Edit", "document-edit-symbolic");
+            let (read_label, read_icon) = super::models::read_action(bookmark.unread);
+            let read_b = make(read_label, read_icon);
+            let (archive_label, archive_icon) =
+                super::models::archive_action(self.inner.scope == Scope::Archived);
+            let archive_b = make(archive_label, archive_icon);
 
-        // Mark as read / unread.
-        read_b.connect_clicked(clone!(
-            #[strong] popover,
-            #[strong(rename_to = this)] self,
-            #[strong(rename_to = was_unread)] bookmark.unread,
-            move |_| {
-                popover.popdown();
-                this.toggle_unread(id, !was_unread);
-            }
-        ));
+            vbox.append(&edit_b);
+            vbox.append(&read_b);
+            vbox.append(&archive_b);
 
-        // Archive / unarchive.
-        archive_b.connect_clicked(clone!(
-            #[strong] popover,
-            #[strong(rename_to = this)] self,
-            move |_| {
-                popover.popdown();
-                this.toggle_archive(id);
-            }
-        ));
+            // Edit.
+            edit_b.connect_clicked(clone!(
+                #[strong] popover,
+                #[strong] bookmark,
+                #[strong(rename_to = this)] self,
+                move |_| {
+                    popover.popdown();
+                    let this2 = this.clone();
+                    add_sheet::open_edit(
+                        this.widget(),
+                        this.inner.client.clone(),
+                        bookmark.clone(),
+                        move |msg| {
+                            super::toast(&this2.inner.toasts, &msg);
+                            this2.refresh();
+                        },
+                    );
+                }
+            ));
+
+            // Mark as read / unread.
+            read_b.connect_clicked(clone!(
+                #[strong] popover,
+                #[strong(rename_to = this)] self,
+                #[strong(rename_to = was_unread)] bookmark.unread,
+                move |_| {
+                    popover.popdown();
+                    this.toggle_unread(id, !was_unread);
+                }
+            ));
+
+            // Archive / unarchive.
+            archive_b.connect_clicked(clone!(
+                #[strong] popover,
+                #[strong(rename_to = this)] self,
+                move |_| {
+                    popover.popdown();
+                    this.toggle_archive(id);
+                }
+            ));
+        }
+
+        vbox.append(&share_b);
 
         // Share — copy the bookmark URL to the clipboard.
         share_b.connect_clicked(clone!(
@@ -586,15 +603,22 @@ impl BookmarkList {
             }
         ));
 
-        // Delete (with confirmation).
-        delete_b.connect_clicked(clone!(
-            #[strong] popover,
-            #[strong(rename_to = this)] self,
-            move |_| {
-                popover.popdown();
-                this.confirm_delete(id);
-            }
-        ));
+        if mutable {
+            let delete_b = make("Delete", "edit-delete-symbolic");
+            delete_b.add_css_class("destructive-action");
+            vbox.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+            vbox.append(&delete_b);
+
+            // Delete (with confirmation).
+            delete_b.connect_clicked(clone!(
+                #[strong] popover,
+                #[strong(rename_to = this)] self,
+                move |_| {
+                    popover.popdown();
+                    this.confirm_delete(id);
+                }
+            ));
+        }
 
         vbox
     }
@@ -630,9 +654,10 @@ impl BookmarkList {
         let this = self.clone();
         runtime::spawn(
             async move {
+                // Only the archived scope un-archives; active and shared archive.
                 match scope {
-                    Scope::Active => client.archive(id).await,
                     Scope::Archived => client.unarchive(id).await,
+                    Scope::Active | Scope::Shared => client.archive(id).await,
                 }
             },
             move |result| match result {
