@@ -354,7 +354,7 @@ fn install_breakpoint(
     let condition = adw::BreakpointCondition::new_length(
         adw::BreakpointConditionLengthType::MaxWidth,
         550.0,
-        adw::LengthUnit::Px,
+        adw::LengthUnit::Sp,
     );
     let breakpoint = adw::Breakpoint::new(condition);
 

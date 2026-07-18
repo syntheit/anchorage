@@ -10,3 +10,5 @@ Icon=io.matv.Anchorage
 Terminal=false
 StartupNotify=true
 DBusActivatable=false
+StartupWMClass=anchorage
+X-Purism-FormFactor=Workstation;Mobile;
