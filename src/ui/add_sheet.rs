@@ -166,7 +166,6 @@ fn build<F>(
     let dialog = adw::Dialog::builder()
         .title(if is_edit { "Edit bookmark" } else { "Add bookmark" })
         .content_width(480)
-        .content_height(640)
         .child(&toasts)
         .build();
 
