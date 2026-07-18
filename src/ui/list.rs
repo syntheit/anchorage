@@ -277,44 +277,42 @@ impl BookmarkList {
         });
     }
 
-    /// Wire the sort selector: each option applies its `SortOrder` and refreshes
-    /// (only on a real change). The choice persists for the session in
-    /// `Inner::sort`, so it survives searches and filter changes.
+    /// Wire the sort selector: a `gio::Menu` model driven by a stateful
+    /// `SimpleAction`. Each option applies its `SortOrder` and refreshes (only on
+    /// a real change). The choice persists for the session in `Inner::sort`, so
+    /// it survives searches and filter changes; the action's state keeps the
+    /// menu's radio checkmark in sync.
     fn wire_sort(&self, menu: &gtk::MenuButton) {
-        let popover = gtk::Popover::builder().has_arrow(true).build();
-        let vbox = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .spacing(2)
-            .build();
+        use gtk::gio;
 
-        // Radio group: exactly one option checked, seeded from the current sort.
-        let current = self.inner.sort.get();
-        let mut group: Option<gtk::CheckButton> = None;
+        let model = gio::Menu::new();
         for (order, label) in SortOrder::CHOICES {
-            let check = gtk::CheckButton::builder()
-                .label(label)
-                .active(order == current)
-                .build();
-            if let Some(first) = &group {
-                check.set_group(Some(first));
-            } else {
-                group = Some(check.clone());
-            }
-            let this = self.clone();
-            let popover = popover.clone();
-            check.connect_toggled(move |c| {
-                // Only the newly-activated button triggers a reload; the
-                // deactivated one also emits `toggled`.
-                if c.is_active() && this.inner.sort.replace(order) != order {
-                    popover.popdown();
-                    this.refresh();
-                }
-            });
-            vbox.append(&check);
+            let item = gio::MenuItem::new(Some(label), None);
+            item.set_action_and_target_value(Some("list.sort"), Some(&order.to_str().to_variant()));
+            model.append_item(&item);
         }
-
-        popover.set_child(Some(&vbox));
+        let popover = gtk::PopoverMenu::from_model(Some(&model));
         menu.set_popover(Some(&popover));
+
+        let current = self.inner.sort.get().to_str();
+        let action = gio::SimpleAction::new_stateful(
+            "sort",
+            Some(glib::VariantTy::STRING),
+            &current.to_variant(),
+        );
+        let this = self.clone();
+        action.connect_activate(move |act, param| {
+            let Some(s) = param.and_then(|v| v.str()) else { return };
+            let Some(order) = SortOrder::from_str(s) else { return };
+            act.set_state(&s.to_variant());
+            if this.inner.sort.replace(order) != order {
+                this.refresh();
+            }
+        });
+
+        let group = gio::SimpleActionGroup::new();
+        group.add_action(&action);
+        menu.insert_action_group("list", Some(&group));
     }
 
     /// Debounce search input by 300ms, then refresh with the new query.

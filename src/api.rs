@@ -76,6 +76,28 @@ impl SortOrder {
             SortOrder::TitleDesc => "title_desc",
         }
     }
+
+    /// A stable string key for this variant, used as the target value of the
+    /// sort menu action (see `ui::list::wire_sort`).
+    pub fn to_str(self) -> &'static str {
+        match self {
+            SortOrder::DateDesc => "date_desc",
+            SortOrder::DateAsc => "date_asc",
+            SortOrder::TitleAsc => "title_asc",
+            SortOrder::TitleDesc => "title_desc",
+        }
+    }
+
+    /// Parse a key produced by [`SortOrder::to_str`] back into a variant.
+    pub fn from_str(s: &str) -> Option<SortOrder> {
+        match s {
+            "date_desc" => Some(SortOrder::DateDesc),
+            "date_asc" => Some(SortOrder::DateAsc),
+            "title_asc" => Some(SortOrder::TitleAsc),
+            "title_desc" => Some(SortOrder::TitleDesc),
+            _ => None,
+        }
+    }
 }
 
 /// An owned, cloneable view of a bookmark for the UI layer.
