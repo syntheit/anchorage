@@ -59,6 +59,11 @@ fn build<F>(
 
     let toasts = adw::ToastOverlay::new();
 
+    // Inline error banner: network/save/validate failures surface here (above the
+    // URL group) rather than as a transient toast, so the message stays visible
+    // while the user fixes the input. Successes remain toasts.
+    let banner = adw::Banner::builder().revealed(false).build();
+
     // --- URL group -----------------------------------------------------------
     let url_row = adw::EntryRow::builder().title("URL").build();
     url_row.set_input_purpose(gtk::InputPurpose::Url);
@@ -154,6 +159,8 @@ fn build<F>(
 
     let toolbar = adw::ToolbarView::builder().content(&page).build();
     toolbar.add_top_bar(&header);
+    // The banner sits directly under the header, above the page's groups.
+    toolbar.add_top_bar(&banner);
     toasts.set_child(Some(&toolbar));
 
     let dialog = adw::Dialog::builder()
@@ -175,6 +182,7 @@ fn build<F>(
         #[strong] suggestions,
         #[strong] suggestions_group,
         #[strong] toasts,
+        #[strong] banner,
         #[strong] in_flight,
         move || {
             let url = url_row.text().trim().to_string();
@@ -196,11 +204,13 @@ fn build<F>(
                     #[strong] suggestions,
                     #[strong] suggestions_group,
                     #[strong] toasts,
+                    #[strong] banner,
                     #[strong] in_flight,
                     move |result| {
                         *in_flight.borrow_mut() = false;
                         match result {
                             Ok(check) => {
+                                banner.set_revealed(false);
                                 if let Some(existing) = check.existing {
                                     // Already saved: prefill from it.
                                     if title_row.text().is_empty() {
@@ -251,7 +261,10 @@ fn build<F>(
                                     }
                                 }
                             }
-                            Err(err) => super::toast(&toasts, &err.to_string()),
+                            Err(err) => {
+                                banner.set_title(&err.to_string());
+                                banner.set_revealed(true);
+                            }
                         }
                     }
                 ),
@@ -289,7 +302,7 @@ fn build<F>(
         #[strong] unread_row,
         #[strong] shared_row,
         #[strong] save_button,
-        #[strong] toasts,
+        #[strong] banner,
         #[strong] save_in_flight,
         #[strong] on_saved,
         move |_| {
@@ -298,9 +311,11 @@ fn build<F>(
             }
             let url = url_row.text().trim().to_string();
             if url.is_empty() || url::Url::parse(&url).is_err() {
-                super::toast(&toasts, "Enter a valid URL first");
+                banner.set_title("Enter a valid URL first");
+                banner.set_revealed(true);
                 return;
             }
+            banner.set_revealed(false);
 
             let draft = BookmarkDraft {
                 url: url.clone(),
@@ -327,7 +342,7 @@ fn build<F>(
                 clone!(
                     #[strong] dialog,
                     #[strong] save_button,
-                    #[strong] toasts,
+                    #[strong] banner,
                     #[strong] save_in_flight,
                     #[strong] on_saved,
                     move |result| {
@@ -343,7 +358,10 @@ fn build<F>(
                                     "Bookmark saved".into()
                                 });
                             }
-                            Err(err) => super::toast(&toasts, &err.to_string()),
+                            Err(err) => {
+                                banner.set_title(&err.to_string());
+                                banner.set_revealed(true);
+                            }
                         }
                     }
                 ),

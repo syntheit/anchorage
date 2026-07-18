@@ -49,12 +49,9 @@ where
         .margin_top(12)
         .build();
 
-    let status = gtk::Label::builder()
-        .halign(gtk::Align::Center)
-        .wrap(true)
-        .margin_top(6)
-        .build();
-    status.set_visible(false);
+    // Inline error banner: a failed connection surfaces here and stays visible
+    // while the user corrects the URL/token. A successful connect hides it.
+    let status = adw::Banner::builder().revealed(false).build();
 
     let action_group = adw::PreferencesGroup::new();
     let action_box = gtk::Box::builder()
@@ -62,7 +59,6 @@ where
         .spacing(6)
         .build();
     action_box.append(&connect_button);
-    action_box.append(&status);
     action_group.add(&action_box);
 
     // Guard against overlapping connect attempts.
@@ -96,10 +92,8 @@ where
             *in_flight.borrow_mut() = true;
             connect_button.set_sensitive(false);
             connect_button.set_label("Connecting…");
-            status.set_visible(true);
-            status.remove_css_class("error");
-            status.remove_css_class("success");
-            status.set_text("Verifying credentials…");
+            // Clear any prior error while this attempt is in flight.
+            status.set_revealed(false);
 
             let client = Client::new(&url, &token);
             let creds = Credentials { url, token };
@@ -126,13 +120,12 @@ where
                         connect_button.set_label("Connect");
                         match result {
                             Ok(()) => {
-                                status.add_css_class("success");
-                                status.set_text("Connected");
+                                status.set_revealed(false);
                                 on_connected(client.clone());
                             }
                             Err(err) => {
-                                status.add_css_class("error");
-                                status.set_text(&err.to_string());
+                                status.set_title(&err.to_string());
+                                status.set_revealed(true);
                             }
                         }
                     }
@@ -147,6 +140,8 @@ where
 
     let toolbar = adw::ToolbarView::builder().content(&content).build();
     toolbar.add_top_bar(&adw::HeaderBar::new());
+    // The error banner sits under the header, above the form.
+    toolbar.add_top_bar(&status);
     toasts.set_child(Some(&toolbar));
 
     adw::NavigationPage::builder()
