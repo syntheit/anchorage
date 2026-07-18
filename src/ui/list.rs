@@ -433,20 +433,21 @@ impl BookmarkList {
     }
 
     /// Attach the per-bookmark action popover to a row's overflow (⋮) menu
-    /// button. The button owns the popover, so its lifecycle is managed for us —
-    /// no manual parenting/unparenting needed (unlike [`show_actions`]).
+    /// button. The popover is built lazily on first open so it always reflects
+    /// the bookmark's current state (read/unread, archived). The `MenuButton`
+    /// owns the popover it's given, so its lifecycle is managed for us.
     fn wire_row_menu(&self, id: i32, menu: &gtk::MenuButton) {
         let this = self.clone();
-        // Build the popover lazily on first open so it always reflects the
-        // bookmark's current state (read/unread, archived). The MenuButton owns
-        // the popover it's given, so its lifecycle is handled for us.
         menu.set_create_popup_func(move |mb| {
             let Some(bookmark) = this.inner.bookmarks.borrow().get(&id).cloned() else {
                 return;
             };
-            let popover = gtk::Popover::builder().has_arrow(true).build();
-            let content = this.build_actions_menu(id, &bookmark, &popover, mb);
-            popover.set_child(Some(&content));
+            let (model, group) = this.build_row_action_group(id, &bookmark, mb);
+            // Install the action group under the "row" prefix; menu item action
+            // strings are "row.<name>", mirroring the "list.sort" pattern used
+            // by the sort menu above.
+            mb.insert_action_group("row", Some(&group));
+            let popover = gtk::PopoverMenu::from_model(Some(&model));
             mb.set_popover(Some(&popover));
         });
     }
@@ -494,7 +495,7 @@ impl BookmarkList {
 
         // The shared view can surface bookmarks the user doesn't own, where
         // edit/archive/delete/read would 403. Keep only the read-oriented
-        // actions (open, copy link) there — mirrors `build_actions_menu`.
+        // actions (open, copy link) there — mirrors `build_row_action_group`.
         let mutable = self.inner.scope != Scope::Shared;
 
         // Open in browser.
@@ -607,88 +608,63 @@ impl BookmarkList {
         dialog.present(Some(anchor));
     }
 
-    /// Build the shared action-menu content for `bookmark`: Open / Edit /
-    /// Mark read-unread / Archive-Unarchive / Copy link (share) / Delete. Each
-    /// button pops `popover` down and acts on this specific bookmark, then
-    /// refreshes the list (re-applying the active filter). `anchor` supplies the
-    /// root window for the URI launcher. Shared by [`show_actions`] and
-    /// [`wire_row_menu`].
-    fn build_actions_menu(
+    /// Build a `gio::Menu` model and a matching `gio::SimpleActionGroup` for
+    /// the ⋮ overflow menu of `bookmark`. The model uses action names of the
+    /// form `"row.<name>"` (matching the installed group prefix "row") — the
+    /// same pattern as the sort menu's `"list.sort"`. Icons are attached via
+    /// `gio::ThemedIcon` so `GtkPopoverMenu` renders them. Delete is placed in
+    /// its own section to produce the separator. `anchor` supplies the root
+    /// window for the URI-launcher action.
+    ///
+    /// The shared view surfaces bookmarks the user doesn't own; only the
+    /// read-oriented actions (open, copy) are included there, matching
+    /// [`show_actions`].
+    fn build_row_action_group(
         &self,
         id: i32,
         bookmark: &BookmarkView,
-        popover: &gtk::Popover,
         anchor: &impl IsA<gtk::Widget>,
-    ) -> gtk::Box {
-        let vbox = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .spacing(2)
-            .build();
+    ) -> (gtk::gio::Menu, gtk::gio::SimpleActionGroup) {
+        use gtk::gio;
 
-        let make = |label: &str, icon: &str| {
-            let b = gtk::Button::builder()
-                .css_classes(["flat"])
-                .child(&{
-                    let bx = gtk::Box::builder().spacing(8).build();
-                    bx.append(&gtk::Image::from_icon_name(icon));
-                    bx.append(&gtk::Label::new(Some(label)));
-                    bx
-                })
-                .build();
-            b.set_halign(gtk::Align::Fill);
-            b
+        let group = gio::SimpleActionGroup::new();
+        let main_section = gio::Menu::new();
+
+        // Helper: create a named action with no parameter, add to group, and
+        // return a MenuItem for it.
+        let make_item = |name: &str, label: &str, icon_name: &str| -> gio::MenuItem {
+            let item = gio::MenuItem::new(Some(label), Some(&format!("row.{name}")));
+            item.set_icon(&gio::ThemedIcon::new(icon_name));
+            item
         };
 
-        // The shared view can surface bookmarks the user doesn't own, where
-        // edit/archive/delete/read would 403. Keep only the read-oriented
-        // actions (open, copy link) there.
         let mutable = self.inner.scope != Scope::Shared;
 
-        let open_b = make("Open in browser", "web-browser-symbolic");
-        let share_b = make("Copy link", "edit-copy-symbolic");
-
-        vbox.append(&open_b);
-
-        // Open in browser.
-        open_b.connect_clicked(clone!(
-            #[strong] popover,
-            #[strong(rename_to = url)] bookmark.url,
-            #[strong] anchor,
-            move |_| {
-                popover.popdown();
+        // --- Open in browser ------------------------------------------------
+        {
+            let open = gio::SimpleAction::new("open", None);
+            let url = bookmark.url.clone();
+            let anchor = anchor.clone().upcast::<gtk::Widget>();
+            open.connect_activate(move |_, _| {
                 let launcher = gtk::UriLauncher::new(&url);
                 let window = anchor.root().and_downcast::<gtk::Window>();
-                launcher.launch(
-                    window.as_ref(),
-                    gtk::gio::Cancellable::NONE,
-                    |res| {
-                        if let Err(err) = res {
-                            tracing::warn!(%err, "failed to open uri");
-                        }
-                    },
-                );
-            }
-        ));
+                launcher.launch(window.as_ref(), gio::Cancellable::NONE, |res| {
+                    if let Err(err) = res {
+                        tracing::warn!(%err, "failed to open uri");
+                    }
+                });
+            });
+            group.add_action(&open);
+            main_section.append_item(&make_item("open", "Open in browser", "web-browser-symbolic"));
+        }
 
         if mutable {
-            let edit_b = make("Edit", "document-edit-symbolic");
-            let (read_label, read_icon) = super::models::read_action(bookmark.unread);
-            let read_b = make(read_label, read_icon);
-            let (archive_label, archive_icon) =
-                super::models::archive_action(self.inner.scope == Scope::Archived);
-            let archive_b = make(archive_label, archive_icon);
-
-            vbox.append(&edit_b);
-            vbox.append(&read_b);
-            vbox.append(&archive_b);
-
-            // Edit.
-            edit_b.connect_clicked(clone!(
-                #[strong] popover,
-                #[strong] bookmark,
-                #[strong(rename_to = this)] self,
-                move |_| {
-                    popover.popdown();
+            // --- Edit -------------------------------------------------------
+            {
+                let edit = gio::SimpleAction::new("edit", None);
+                let bookmark = bookmark.clone();
+                let this = self.clone();
+                edit.connect_activate(move |_, _| {
                     let this2 = this.clone();
                     add_sheet::open_edit(
                         this.widget(),
@@ -699,62 +675,72 @@ impl BookmarkList {
                             this2.refresh();
                         },
                     );
-                }
-            ));
+                });
+                group.add_action(&edit);
+                main_section.append_item(&make_item("edit", "Edit", "document-edit-symbolic"));
+            }
 
-            // Mark as read / unread.
-            read_b.connect_clicked(clone!(
-                #[strong] popover,
-                #[strong(rename_to = this)] self,
-                #[strong(rename_to = was_unread)] bookmark.unread,
-                move |_| {
-                    popover.popdown();
+            // --- Mark read / unread -----------------------------------------
+            {
+                let (read_label, read_icon) = super::models::read_action(bookmark.unread);
+                let toggle_read = gio::SimpleAction::new("toggle-read", None);
+                let this = self.clone();
+                let was_unread = bookmark.unread;
+                toggle_read.connect_activate(move |_, _| {
                     this.toggle_unread(id, !was_unread);
-                }
-            ));
+                });
+                group.add_action(&toggle_read);
+                main_section.append_item(&make_item("toggle-read", read_label, read_icon));
+            }
 
-            // Archive / unarchive.
-            archive_b.connect_clicked(clone!(
-                #[strong] popover,
-                #[strong(rename_to = this)] self,
-                move |_| {
-                    popover.popdown();
+            // --- Archive / unarchive ----------------------------------------
+            {
+                let (archive_label, archive_icon) =
+                    super::models::archive_action(self.inner.scope == Scope::Archived);
+                let toggle_archive = gio::SimpleAction::new("toggle-archive", None);
+                let this = self.clone();
+                toggle_archive.connect_activate(move |_, _| {
                     this.toggle_archive(id);
-                }
-            ));
+                });
+                group.add_action(&toggle_archive);
+                main_section
+                    .append_item(&make_item("toggle-archive", archive_label, archive_icon));
+            }
         }
 
-        vbox.append(&share_b);
-
-        // Share — copy the bookmark URL to the clipboard.
-        share_b.connect_clicked(clone!(
-            #[strong] popover,
-            #[strong(rename_to = url)] bookmark.url,
-            #[strong(rename_to = this)] self,
-            move |_| {
-                popover.popdown();
+        // --- Copy link ------------------------------------------------------
+        {
+            let copy = gio::SimpleAction::new("copy", None);
+            let url = bookmark.url.clone();
+            let this = self.clone();
+            copy.connect_activate(move |_, _| {
                 this.copy_url(&url);
-            }
-        ));
+            });
+            group.add_action(&copy);
+            main_section.append_item(&make_item("copy", "Copy link", "edit-copy-symbolic"));
+        }
+
+        // Build the top-level menu. Delete lives in its own section so
+        // GtkPopoverMenu renders a separator before it.
+        let model = gio::Menu::new();
+        model.append_section(None, &main_section);
 
         if mutable {
-            let delete_b = make("Delete", "edit-delete-symbolic");
-            delete_b.add_css_class("destructive-action");
-            vbox.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-            vbox.append(&delete_b);
-
-            // Delete (with confirmation).
-            delete_b.connect_clicked(clone!(
-                #[strong] popover,
-                #[strong(rename_to = this)] self,
-                move |_| {
-                    popover.popdown();
+            // --- Delete (confirmed) -----------------------------------------
+            let delete_section = gio::Menu::new();
+            {
+                let delete = gio::SimpleAction::new("delete", None);
+                let this = self.clone();
+                delete.connect_activate(move |_, _| {
                     this.confirm_delete(id);
-                }
-            ));
+                });
+                group.add_action(&delete);
+                delete_section.append_item(&make_item("delete", "Delete", "edit-delete-symbolic"));
+            }
+            model.append_section(None, &delete_section);
         }
 
-        vbox
+        (model, group)
     }
 
     /// Copy `url` to the display clipboard and toast confirmation. This is the
