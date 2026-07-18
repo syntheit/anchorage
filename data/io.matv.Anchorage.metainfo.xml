@@ -56,4 +56,8 @@
       </description>
     </release>
   </releases>
+
+  <screenshots>
+    <!-- Screenshots will be added after the first stable release. -->
+  </screenshots>
 </component>

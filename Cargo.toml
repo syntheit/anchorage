@@ -16,9 +16,10 @@ name = "anchorage"
 path = "src/main.rs"
 
 [dependencies]
-# GTK / libadwaita bindings. v4_10 ABI is a safe floor; libadwaita v1_5 gives us AboutDialog.
+# GTK / libadwaita bindings. v4_10 ABI is a safe floor; libadwaita v1_6 gives us
+# AboutDialog and ButtonRow.
 gtk = { package = "gtk4", version = "0.11", features = ["v4_12"] }
-adw = { package = "libadwaita", version = "0.9", features = ["v1_5"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_6"] }
 
 # API layer — async client only, rustls (no OpenSSL needed for reqwest).
 # The crate's lib name is `linkding`; rename it to `linkding_rs` for clearer imports.

@@ -382,11 +382,9 @@ fn settings_view(
         .build();
     server_group.add(&server_row);
 
-    let disconnect = gtk::Button::builder()
-        .label("Disconnect from server")
-        .css_classes(["destructive-action", "pill"])
-        .halign(gtk::Align::Center)
-        .margin_top(12)
+    let disconnect = adw::ButtonRow::builder()
+        .title("Disconnect from server")
+        .css_classes(["destructive-action"])
         .build();
     let disconnect_group = adw::PreferencesGroup::new();
     disconnect_group.add(&disconnect);
@@ -404,7 +402,7 @@ fn settings_view(
     page.add(&about_group);
 
     // Disconnect: confirm, clear keyring, return to connect page.
-    disconnect.connect_clicked(clone!(
+    disconnect.connect_activated(clone!(
         #[strong] app,
         #[weak] nav,
         #[strong] page,
