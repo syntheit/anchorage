@@ -67,7 +67,7 @@ fn build<F>(
     }
 
     let validate_button = gtk::Button::builder()
-        .icon_name("emblem-synchronizing-symbolic")
+        .icon_name("network-receive-symbolic")
         .tooltip_text("Validate & autofill")
         .valign(gtk::Align::Center)
         .css_classes(["flat"])

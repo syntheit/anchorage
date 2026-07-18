@@ -136,16 +136,16 @@ fn main_page(
         archived.widget(),
         Some("archived"),
         "Archived",
-        "folder-symbolic",
+        "folder-saved-search-symbolic",
     );
     stack.add_titled_with_icon(
         shared.widget(),
         Some("shared"),
         "Shared",
-        "emblem-shared-symbolic",
+        "people-symbolic",
     );
     stack.add_titled_with_icon(tags.widget(), Some("tags"), "Tags", "tag-symbolic");
-    stack.add_titled_with_icon(&settings, Some("settings"), "Settings", "emblem-system-symbolic");
+    stack.add_titled_with_icon(&settings, Some("settings"), "Settings", "preferences-system-symbolic");
 
     // --- Header buttons -------------------------------------------------------
     let search_toggle = gtk::ToggleButton::builder()
