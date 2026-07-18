@@ -152,7 +152,7 @@ impl TagsView {
     }
 
     /// Wire the create-tag entry + button. Both Enter and the button submit.
-    fn wire_create(&self, entry: &gtk::Entry, button: &gtk::Button) {
+    fn wire_create(&self, entry: &adw::EntryRow, button: &gtk::Button) {
         let submit = Rc::new(clone!(
             #[strong(rename_to = this)] self,
             #[weak] entry,
@@ -169,10 +169,10 @@ impl TagsView {
             #[strong] submit,
             move |_| submit()
         ));
-        entry.connect_activate(move |_| submit());
+        entry.connect_entry_activated(move |_| submit());
     }
 
-    fn create_tag(&self, name: String, entry: &gtk::Entry) {
+    fn create_tag(&self, name: String, entry: &adw::EntryRow) {
         let client = self.inner.client.clone();
         let this = self.clone();
         let entry = entry.clone();
@@ -265,28 +265,25 @@ impl TagsView {
     }
 }
 
-/// The create-tag bar: a name entry with a trailing "Add" button.
-fn build_create_bar() -> (gtk::Box, gtk::Entry, gtk::Button) {
-    let entry = gtk::Entry::builder()
-        .placeholder_text("New tag name")
-        .hexpand(true)
-        .build();
+/// The create-tag bar: an `AdwEntryRow` (inside a boxed-list preferences group)
+/// with a trailing "Add" button as its suffix.
+fn build_create_bar() -> (gtk::Widget, adw::EntryRow, gtk::Button) {
+    let entry = adw::EntryRow::builder().title("New tag name").build();
     let button = gtk::Button::builder()
         .icon_name("list-add-symbolic")
         .tooltip_text("Create tag")
-        .css_classes(["suggested-action"])
+        .valign(gtk::Align::Center)
+        .css_classes(["flat", "suggested-action"])
         .build();
+    entry.add_suffix(&button);
 
-    let bar = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(6)
+    let group = adw::PreferencesGroup::builder()
         .margin_top(6)
         .margin_bottom(6)
         .margin_start(6)
         .margin_end(6)
         .build();
-    bar.append(&entry);
-    bar.append(&button);
+    group.add(&entry);
 
-    (bar, entry, button)
+    (group.upcast(), entry, button)
 }

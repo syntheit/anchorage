@@ -855,11 +855,12 @@ impl BookmarkList {
 
 /// Build the filter/sort bar: three linked, exclusive read-status toggles in the
 /// centre, with a trailing sort selector (a menu button whose popover is wired
-/// by [`BookmarkList::wire_sort`]). Returns the container plus the individual
-/// controls for wiring. "All" starts active to match [`UnreadFilter::All`], the
-/// list's default.
+/// by [`BookmarkList::wire_sort`]). The bar is wrapped in an [`adw::Clamp`] so it
+/// stays a comfortable width on the desktop. Returns the clamp container plus the
+/// individual controls for wiring. "All" starts active to match
+/// [`UnreadFilter::All`], the list's default.
 fn build_filter_bar() -> (
-    gtk::Box,
+    gtk::Widget,
     gtk::ToggleButton,
     gtk::ToggleButton,
     gtk::ToggleButton,
@@ -898,5 +899,7 @@ fn build_filter_bar() -> (
     bar.append(&group);
     bar.append(&sort_menu);
 
-    (bar, all, unread, read, sort_menu)
+    let clamp = adw::Clamp::builder().maximum_size(600).child(&bar).build();
+
+    (clamp.upcast(), all, unread, read, sort_menu)
 }
