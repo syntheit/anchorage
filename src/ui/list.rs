@@ -451,24 +451,160 @@ impl BookmarkList {
         });
     }
 
-    /// Show the action menu for a row via a manually-parented popover. Used by
-    /// whole-row activation (tap the row body, not the ⋮ button). Kept separate
-    /// from [`wire_row_menu`] because a manually-parented popover must be
-    /// unparented on close or every activation leaks a widget.
+    /// Show the action menu for a row via an [`adw::Dialog`]. Used by whole-row
+    /// activation (tap the row body, not the ⋮ button). The dialog presents as a
+    /// bottom sheet on narrow (phone) windows and a centred dialog on wide ones —
+    /// a more touch-friendly target than the small anchored popover the ⋮ button
+    /// uses. The dialog manages its own lifecycle, so there is nothing to
+    /// unparent on close (unlike the old manually-parented popover).
     fn show_actions(&self, id: i32, anchor: &gtk::ListBoxRow) {
         let Some(bookmark) = self.inner.bookmarks.borrow().get(&id).cloned() else {
             return;
         };
 
-        let popover = gtk::Popover::builder().has_arrow(true).build();
-        popover.set_parent(anchor);
-        // The popover is manually parented to the row, so it must be unparented
-        // when it closes — otherwise every row-action click leaks a widget.
-        popover.connect_closed(|p| p.unparent());
+        let title = super::models::display_title(&bookmark);
 
-        let content = self.build_actions_menu(id, &bookmark, &popover, anchor);
-        popover.set_child(Some(&content));
-        popover.popup();
+        let listbox = gtk::ListBox::builder()
+            .selection_mode(gtk::SelectionMode::None)
+            .css_classes(["boxed-list"])
+            .build();
+
+        let dialog = adw::Dialog::builder()
+            .title(&title)
+            .content_width(360)
+            .build();
+
+        // Add an activatable action row that closes the dialog and runs `f`.
+        let add_row = |label: &str, icon: &str, destructive: bool, f: Box<dyn Fn()>| {
+            let row = adw::ActionRow::builder()
+                .title(label)
+                .activatable(true)
+                .build();
+            row.add_prefix(&gtk::Image::from_icon_name(icon));
+            if destructive {
+                row.add_css_class("error");
+            }
+            let dialog = dialog.clone();
+            row.connect_activated(move |_| {
+                dialog.close();
+                f();
+            });
+            listbox.append(&row);
+        };
+
+        // The shared view can surface bookmarks the user doesn't own, where
+        // edit/archive/delete/read would 403. Keep only the read-oriented
+        // actions (open, copy link) there — mirrors `build_actions_menu`.
+        let mutable = self.inner.scope != Scope::Shared;
+
+        // Open in browser.
+        add_row(
+            "Open in browser",
+            "web-browser-symbolic",
+            false,
+            Box::new(clone!(
+                #[strong(rename_to = url)] bookmark.url,
+                #[strong] anchor,
+                move || {
+                    let launcher = gtk::UriLauncher::new(&url);
+                    let window = anchor.root().and_downcast::<gtk::Window>();
+                    launcher.launch(window.as_ref(), gtk::gio::Cancellable::NONE, |res| {
+                        if let Err(err) = res {
+                            tracing::warn!(%err, "failed to open uri");
+                        }
+                    });
+                }
+            )),
+        );
+
+        if mutable {
+            // Edit.
+            add_row(
+                "Edit",
+                "document-edit-symbolic",
+                false,
+                Box::new(clone!(
+                    #[strong] bookmark,
+                    #[strong(rename_to = this)] self,
+                    move || {
+                        let this2 = this.clone();
+                        add_sheet::open_edit(
+                            this.widget(),
+                            this.inner.client.clone(),
+                            bookmark.clone(),
+                            move |msg| {
+                                super::toast(&this2.inner.toasts, &msg);
+                                this2.refresh();
+                            },
+                        );
+                    }
+                )),
+            );
+
+            // Mark as read / unread.
+            let (read_label, read_icon) = super::models::read_action(bookmark.unread);
+            add_row(
+                read_label,
+                read_icon,
+                false,
+                Box::new(clone!(
+                    #[strong(rename_to = this)] self,
+                    #[strong(rename_to = was_unread)] bookmark.unread,
+                    move || this.toggle_unread(id, !was_unread)
+                )),
+            );
+
+            // Archive / unarchive.
+            let (archive_label, archive_icon) =
+                super::models::archive_action(self.inner.scope == Scope::Archived);
+            add_row(
+                archive_label,
+                archive_icon,
+                false,
+                Box::new(clone!(
+                    #[strong(rename_to = this)] self,
+                    move || this.toggle_archive(id)
+                )),
+            );
+        }
+
+        // Copy link (share).
+        add_row(
+            "Copy link",
+            "edit-copy-symbolic",
+            false,
+            Box::new(clone!(
+                #[strong(rename_to = url)] bookmark.url,
+                #[strong(rename_to = this)] self,
+                move || this.copy_url(&url)
+            )),
+        );
+
+        if mutable {
+            // Delete (with confirmation).
+            add_row(
+                "Delete",
+                "edit-delete-symbolic",
+                true,
+                Box::new(clone!(
+                    #[strong(rename_to = this)] self,
+                    move || this.confirm_delete(id)
+                )),
+            );
+        }
+
+        let group = adw::PreferencesGroup::new();
+        group.add(&listbox);
+
+        let page = adw::PreferencesPage::new();
+        page.add(&group);
+
+        let header = adw::HeaderBar::new();
+        let toolbar = adw::ToolbarView::builder().content(&page).build();
+        toolbar.add_top_bar(&header);
+        dialog.set_child(Some(&toolbar));
+
+        dialog.present(Some(anchor));
     }
 
     /// Build the shared action-menu content for `bookmark`: Open / Edit /
